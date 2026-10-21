@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- Tema claro ---------- */
+:root {
+  --bg: 243 245 250;
+  --surface: 255 255 255;
+  --surface2: 238 241 247;
+  --line: 221 226 236;
+  --fg: 17 20 33;
+  --muted: 100 108 130;
+  --primary: 214 31 52;
+  --primary-fg: 255 255 255;
+  --accent: 8 145 178;
+  --accent2: 109 40 217;
+  --grid: 17 20 33;
+  color-scheme: light;
+}
+
+/* ---------- Tema escuro (padrão) ---------- */
+.dark {
+  --bg: 8 9 14;
+  --surface: 16 18 27;
+  --surface2: 25 28 40;
+  --line: 40 44 62;
+  --fg: 233 236 245;
+  --muted: 138 146 168;
+  --primary: 247 67 86;
+  --primary-fg: 255 255 255;
+  --accent: 34 211 238;
+  --accent2: 167 139 250;
+  --grid: 255 255 255;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+    font-feature-settings: 'cv11', 'ss01', 'calt';
+    background-image:
+      radial-gradient(52rem 30rem at -5% -10%, rgb(var(--primary) / 0.13), transparent 62%),
+      radial-gradient(46rem 28rem at 105% 8%, rgb(var(--accent) / 0.08), transparent 60%),
+      radial-gradient(40rem 26rem at 50% 120%, rgb(var(--accent2) / 0.07), transparent 60%);
+    background-attachment: fixed;
+  }
+  /* Grade técnica ao fundo, que se dissolve nas bordas */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgb(var(--grid) / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--grid) / 0.035) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 78%);
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 78%);
+  }
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight;
+  }
+  ::selection {
+    @apply bg-primary/30;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-line;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted/50;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium
+      transition duration-150 ease-out
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-bg
+      active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn relative overflow-hidden text-primary-fg shadow-sm hover:-translate-y-px hover:shadow-glow active:brightness-95;
+    background-image: linear-gradient(135deg, rgb(var(--primary)), rgb(var(--primary) / 0.72));
+  }
+  .btn-primary::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 30%, rgb(255 255 255 / 0.28) 50%, transparent 70%);
+    transform: translateX(-120%);
+    transition: transform 0.6s ease;
+  }
+  .btn-primary:hover::after {
+    transform: translateX(120%);
+  }
+  .btn-ghost {
+    @apply btn text-fg hover:bg-surface2;
+  }
+  .btn-outline {
+    @apply btn border border-line bg-surface/60 text-fg backdrop-blur hover:border-accent/50 hover:bg-surface2 hover:shadow-glow-accent;
+  }
+  .input {
+    @apply w-full rounded-xl border border-line bg-surface2/50 px-3 py-2 text-sm text-fg transition
+      placeholder:text-muted/60 hover:border-muted/40
+      focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/15;
+  }
+  /* Vidro: cartão translúcido com realce no topo */
+  .card {
+    @apply rounded-2xl border border-line bg-surface/75 shadow-card backdrop-blur-xl;
+  }
+  .card-hover {
+    @apply transition duration-200 ease-out hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-lift;
+  }
+  /* Borda em degradê brilhante (cartões de destaque) */
+  .glow-border {
+    border: 1px solid transparent;
+    background:
+      linear-gradient(rgb(var(--surface) / 0.92), rgb(var(--surface) / 0.92)) padding-box,
+      linear-gradient(135deg, rgb(var(--primary) / 0.65), rgb(var(--accent) / 0.45) 45%, rgb(var(--line)) 75%) border-box;
+  }
+  /* Marcas de canto, como um painel de instrumentos */
+  .hud {
+    position: relative;
+  }
+  .hud::before,
+  .hud::after {
+    content: '';
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    pointer-events: none;
+    border: 1.5px solid rgb(var(--accent) / 0.75);
+  }
+  .hud::before {
+    top: 6px;
+    left: 6px;
+    border-right: 0;
+    border-bottom: 0;
+    border-top-left-radius: 4px;
+  }
+  .hud::after {
+    right: 6px;
+    bottom: 6px;
+    border-left: 0;
+    border-top: 0;
+    border-bottom-right-radius: 4px;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium text-muted;
+  }
+  /* Rótulo em caixa alta, estilo painel */
+  .kicker {
+    @apply font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted;
+  }
+  /* Valores numéricos e códigos */
+  .num {
+    @apply font-mono tabular-nums tracking-tight;
+  }
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(120deg, rgb(var(--primary)), rgb(var(--accent2)) 55%, rgb(var(--accent)));
+  }
+  .skeleton {
+    @apply rounded-lg bg-[length:200%_100%] animate-shimmer;
+    background-image: linear-gradient(90deg, rgb(var(--surface2)) 25%, rgb(var(--line)) 50%, rgb(var(--surface2)) 75%);
+  }
+  .stagger > * {
+    @apply animate-fade-up;
+    animation-delay: calc(var(--i, 0) * 45ms);
+  }
+  /* Ponto de status "ao vivo" */
+  .live-dot {
+    @apply relative inline-block h-2 w-2 rounded-full bg-emerald-400;
+  }
+  .live-dot::after {
+    content: '';
+    @apply absolute inset-0 rounded-full bg-emerald-400 animate-pulse-ring;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
