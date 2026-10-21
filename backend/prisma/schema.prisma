@@ -1,0 +1,974 @@
+// Schema do PRO-CRM (MySQL). Sem tabelas de robôs de automação.
+//
+// Multi-equipe: todo registro de negócio tem `donoId`, o usuário (supervisor)
+// dono dos dados. Promotores gravam com o donoId do seu supervisor.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum Perfil {
+  MASTER
+  GERENTE
+  SUPERVISOR
+  BKO
+  PROMOTOR
+}
+
+enum TipoContato {
+  PESSOA
+  EMPRESA
+}
+
+enum StatusProjeto {
+  EM_ANDAMENTO
+  CONCLUIDO
+  PAUSADO
+  CANCELADO
+}
+
+enum StatusTarefa {
+  PENDENTE
+  EM_ANDAMENTO
+  CONCLUIDA
+}
+
+enum PrioridadeNivel {
+  BAIXA
+  MEDIA
+  ALTA
+  URGENTE
+}
+
+enum StatusChamado {
+  NOVO
+  EM_ANDAMENTO
+  AGUARDANDO
+  RESOLVIDO
+  FECHADO
+}
+
+enum SituacaoCampanha {
+  RASCUNHO
+  EM_FILA
+  ENVIANDO
+  ENVIADO
+  CANCELADO
+}
+
+enum EstagioNota {
+  NOVA
+  ATA_REUNIAO
+  ANOTACAO
+  A_FAZER
+}
+
+enum StatusImportacao {
+  PENDENTE
+  IMPORTADO
+  ERRO
+}
+
+enum ModoConversa {
+  IA
+  HUMANO
+}
+
+enum RemetenteWa {
+  LEAD
+  IA
+  HUMANO
+}
+
+// ============================================================
+// USUÁRIOS E ACESSO
+// ============================================================
+
+model Usuario {
+  id           String    @id @default(uuid()) @db.VarChar(36)
+  perfil       Perfil
+  nome         String
+  email        String    @unique
+  senhaHash    String    @map("senha_hash")
+  cargo        String?
+  departamento String?
+  telefone     String?
+  fotoUrl      String?   @map("foto_url")
+  ativo        Boolean   @default(true)
+  ultimoLogin  DateTime? @map("ultimo_login")
+
+  // Hierarquia: promotor -> supervisor -> master
+  superiorId String?   @map("superior_id") @db.VarChar(36)
+  superior   Usuario?  @relation("Hierarquia", fields: [superiorId], references: [id], onDelete: SetNull)
+  subordinados Usuario[] @relation("Hierarquia")
+
+  // Permissões
+  permissoes          Json    @default("[]")
+  permissaoEstrategia Boolean @default(true) @map("permissao_estrategia")
+  permissaoImportacao Boolean @default(false) @map("permissao_importacao")
+  // Gerente: ids dos supervisores sob sua gestão
+  supervisoresGerenciados Json @default("[]") @map("supervisores_gerenciados")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  mensagensEnviadas Mensagem[]
+
+  @@index([superiorId])
+  @@index([perfil])
+  @@map("usuarios")
+}
+
+// Código temporário (OTP) para o login em duas etapas
+model LoginOtp {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  usuarioId  String   @map("usuario_id") @db.VarChar(36)
+  email      String
+  codigoHash String   @map("codigo_hash")
+  expiraEm   DateTime @map("expira_em")
+  usado      Boolean  @default(false)
+  tentativas Int      @default(0)
+  criadoEm   DateTime @default(now()) @map("criado_em")
+
+  @@index([email])
+  @@index([usuarioId])
+  @@map("login_otps")
+}
+
+// Sessão única e IPs liberados por usuário
+model ControleAcesso {
+  usuarioId           String    @id @map("usuario_id") @db.VarChar(36)
+  sessaoId            String?   @map("sessao_id")
+  ips                 Json      @default("[]")
+  ultimoIp            String?   @map("ultimo_ip")
+  ultimoAcessoEm      DateTime? @map("ultimo_acesso_em")
+  ipBloqueado         String?   @map("ip_bloqueado")
+  ipBloqueadoEm       DateTime? @map("ip_bloqueado_em")
+  travarPrimeiroLogin Boolean   @default(false) @map("travar_primeiro_login")
+  atualizadoEm        DateTime  @default(now()) @updatedAt @map("atualizado_em")
+
+  @@map("controle_acesso")
+}
+
+// ============================================================
+// CRM
+// ============================================================
+
+model Contato {
+  id          String      @id @default(uuid()) @db.VarChar(36)
+  donoId      String      @map("dono_id") @db.VarChar(36)
+  nome        String
+  empresa     String?
+  pais        String?     @default("Brasil")
+  telefone    String?
+  email       String?
+  tipo        TipoContato @default(PESSOA)
+  favorito    Boolean     @default(false)
+  fotoUrl     String?     @map("foto_url")
+  observacoes String?     @db.Text
+  criadoEm    DateTime    @default(now()) @map("criado_em")
+  atualizadoEm DateTime   @updatedAt @map("atualizado_em")
+
+  oportunidades Oportunidade[]
+
+  @@index([donoId])
+  @@index([donoId, nome])
+  @@map("contatos")
+}
+
+model Oportunidade {
+  id           String    @id @default(uuid()) @db.VarChar(36)
+  donoId       String    @map("dono_id") @db.VarChar(36)
+  contatoId    String?   @map("contato_id") @db.VarChar(36)
+  responsavelId String?  @map("responsavel_id") @db.VarChar(36)
+  nome         String
+  empresa      String?
+  valor        Decimal?  @db.Decimal(15, 2)
+  // novo | contactando | segundo_dia | terceiro_dia | proposta | ganhamos | perdemos
+  estagio      String    @default("novo")
+  pipeline     String    @default("Meu Pipeline")
+  dataPrevista DateTime? @map("data_prevista") @db.Date
+  prioridade   Int       @default(0) // 0 a 3 estrelas
+  descricao    String?   @db.Text
+  telefone     String?
+  email        String?
+  produto      String?
+  cidade       String?
+  cpf          String?
+  motivoPerda  String?   @map("motivo_perda")
+  // Data da última mudança de estágio (expiração conta a partir daqui)
+  estagioAtualizadoEm DateTime? @map("estagio_atualizado_em")
+  // Campos extras: celulares, nascimento, matrícula, margens etc.
+  detalhes     Json?
+  criadoEm     DateTime  @default(now()) @map("criado_em")
+  atualizadoEm DateTime  @updatedAt @map("atualizado_em")
+
+  contato Contato? @relation(fields: [contatoId], references: [id], onDelete: SetNull)
+
+  @@index([donoId])
+  @@index([donoId, estagio])
+  @@index([donoId, pipeline])
+  @@index([responsavelId])
+  @@map("oportunidades")
+}
+
+model Produto {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  donoId    String   @map("dono_id") @db.VarChar(36)
+  nome      String
+  origem    String?
+  ddd       String?
+  telefone  String?
+  qtdOutrosProdutos Int?    @map("qtd_outros_produtos")
+  outrosProdutos    String? @map("outros_produtos") @db.Text
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, origem])
+  @@map("produtos")
+}
+
+model Projeto {
+  id          String        @id @default(uuid()) @db.VarChar(36)
+  donoId      String        @map("dono_id") @db.VarChar(36)
+  nome        String
+  responsavel String?
+  dataInicio  DateTime?     @map("data_inicio") @db.Date
+  dataFim     DateTime?     @map("data_fim") @db.Date
+  equipe      String?
+  descricao   String?       @db.Text
+  status      StatusProjeto @default(EM_ANDAMENTO)
+  progresso   Int           @default(0)
+  prioridade  PrioridadeNivel @default(MEDIA)
+  categoria   String?
+  favorito    Boolean       @default(false)
+  criadoEm     DateTime     @default(now()) @map("criado_em")
+  atualizadoEm DateTime     @updatedAt @map("atualizado_em")
+
+  tarefas Tarefa[]
+
+  @@index([donoId])
+  @@index([donoId, status])
+  @@map("projetos")
+}
+
+model Tarefa {
+  id          String       @id @default(uuid()) @db.VarChar(36)
+  projetoId   String       @map("projeto_id") @db.VarChar(36)
+  titulo      String
+  descricao   String?      @db.Text
+  status      StatusTarefa @default(PENDENTE)
+  responsavel String?
+  dataLimite  DateTime?    @map("data_limite") @db.Date
+  ordem       Int          @default(0)
+  criadoEm     DateTime    @default(now()) @map("criado_em")
+  atualizadoEm DateTime    @updatedAt @map("atualizado_em")
+
+  projeto Projeto @relation(fields: [projetoId], references: [id], onDelete: Cascade)
+
+  @@index([projetoId])
+  @@map("tarefas")
+}
+
+model Observacao {
+  id       String      @id @default(uuid()) @db.VarChar(36)
+  donoId   String      @map("dono_id") @db.VarChar(36)
+  titulo   String
+  conteudo String?     @db.Text
+  estagio  EstagioNota @default(ANOTACAO)
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@map("observacoes")
+}
+
+model EventoCalendario {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  donoId      String   @map("dono_id") @db.VarChar(36)
+  titulo      String
+  descricao   String?  @db.Text
+  dataInicio  DateTime @map("data_inicio")
+  dataFim     DateTime @map("data_fim")
+  diaInteiro  Boolean  @default(false) @map("dia_inteiro")
+  cor         String   @default("indigo")
+  local       String?
+  participante String?
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, dataInicio, dataFim])
+  @@map("eventos_calendario")
+}
+
+// ============================================================
+// MENSAGENS INTERNAS (INBOX)
+// ============================================================
+
+model Canal {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  donoId    String   @map("dono_id") @db.VarChar(36)
+  nome      String
+  descricao String?
+  criadoEm  DateTime @default(now()) @map("criado_em")
+
+  mensagens Mensagem[]
+
+  @@unique([donoId, nome])
+  @@index([donoId])
+  @@map("canais")
+}
+
+model Mensagem {
+  id          String          @id @default(uuid()) @db.VarChar(36)
+  canalId     String          @map("canal_id") @db.VarChar(36)
+  remetenteId String?         @map("remetente_id") @db.VarChar(36)
+  conteudo    String          @db.Text
+  lida        Boolean         @default(false)
+  favorita    Boolean         @default(false)
+  prioridade  PrioridadeNivel @default(MEDIA)
+  criadoEm    DateTime        @default(now()) @map("criado_em")
+
+  canal     Canal    @relation(fields: [canalId], references: [id], onDelete: Cascade)
+  remetente Usuario? @relation(fields: [remetenteId], references: [id], onDelete: SetNull)
+
+  @@index([canalId])
+  @@index([canalId, lida])
+  @@map("mensagens")
+}
+
+model Notificacao {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  donoId    String   @map("dono_id") @db.VarChar(36)
+  usuarioId String?  @map("usuario_id") @db.VarChar(36)
+  tipo      String
+  titulo    String
+  mensagem  String?  @db.Text
+  lida      Boolean  @default(false)
+  criadoEm  DateTime @default(now()) @map("criado_em")
+
+  @@index([donoId, lida])
+  @@index([usuarioId])
+  @@map("notificacoes")
+}
+
+// ============================================================
+// MARKETING
+// ============================================================
+
+model EmailMarketing {
+  id             String           @id @default(uuid()) @db.VarChar(36)
+  donoId         String           @map("dono_id") @db.VarChar(36)
+  assunto        String
+  responsavel    String?
+  listaCorreio   String?          @map("lista_correio")
+  enviados       Int              @default(0)
+  entreguePct    Decimal?         @map("entregue_pct") @db.Decimal(5, 2)
+  abertoPct      Decimal?         @map("aberto_pct") @db.Decimal(5, 2)
+  clicadoPct     Decimal?         @map("clicado_pct") @db.Decimal(5, 2)
+  respondidoPct  Decimal?         @map("respondido_pct") @db.Decimal(5, 2)
+  situacao       SituacaoCampanha @default(RASCUNHO)
+  dataEnvio      DateTime?        @map("data_envio")
+  criadoEm       DateTime         @default(now()) @map("criado_em")
+  atualizadoEm   DateTime         @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, situacao])
+  @@map("email_marketing")
+}
+
+model SmsMarketing {
+  id             String           @id @default(uuid()) @db.VarChar(36)
+  donoId         String           @map("dono_id") @db.VarChar(36)
+  nome           String
+  listaCorreio   String?          @map("lista_correio")
+  enviados       Int              @default(0)
+  entregues      Int              @default(0)
+  abertoPct      Decimal?         @map("aberto_pct") @db.Decimal(5, 2)
+  respondidoPct  Decimal?         @map("respondido_pct") @db.Decimal(5, 2)
+  clicadoPct     Decimal?         @map("clicado_pct") @db.Decimal(5, 2)
+  situacao       SituacaoCampanha @default(RASCUNHO)
+  dataInicio     DateTime?        @map("data_inicio") @db.Date
+  dataFim        DateTime?        @map("data_fim") @db.Date
+  criadoEm       DateTime         @default(now()) @map("criado_em")
+  atualizadoEm   DateTime         @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, situacao])
+  @@map("sms_marketing")
+}
+
+// ============================================================
+// CENTRAL DE AJUDA
+// ============================================================
+
+model TimeAjuda {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  donoId       String   @map("dono_id") @db.VarChar(36)
+  nome         String
+  naoAtribuidos Int     @default(0) @map("nao_atribuidos")
+  naoAtendidos  Int     @default(0) @map("nao_atendidos")
+  prioridade   Int      @default(0)
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  chamados Chamado[]
+
+  @@index([donoId])
+  @@map("times_ajuda")
+}
+
+model Chamado {
+  id           String          @id @default(uuid()) @db.VarChar(36)
+  donoId       String          @map("dono_id") @db.VarChar(36)
+  timeId       String?         @map("time_id") @db.VarChar(36)
+  atribuidoAId String?         @map("atribuido_a_id") @db.VarChar(36)
+  titulo       String
+  descricao    String?         @db.Text
+  status       StatusChamado   @default(NOVO)
+  prioridade   PrioridadeNivel @default(MEDIA)
+  criadoEm     DateTime        @default(now()) @map("criado_em")
+  atualizadoEm DateTime        @updatedAt @map("atualizado_em")
+
+  time TimeAjuda? @relation(fields: [timeId], references: [id], onDelete: SetNull)
+
+  @@index([donoId])
+  @@index([donoId, status])
+  @@map("chamados")
+}
+
+// ============================================================
+// CRÉDITO: CONVÊNIOS, MARGEM, SIMULAÇÕES, DÍVIDAS
+// ============================================================
+
+model Convenio {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  donoId    String   @map("dono_id") @db.VarChar(36)
+  nome      String
+  descricao String?  @db.Text
+  ativo     Boolean  @default(true)
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@map("convenios")
+}
+
+// Convênios cadastrados e leads duplicados usam a mesma estrutura,
+// distinguidos por `tipo`: CADASTRADO | LEAD_DUPLICADO
+model ConvenioControle {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  donoId        String   @map("dono_id") @db.VarChar(36)
+  tipo          String   @default("CADASTRADO")
+  empregador    String
+  codigo        String?
+  tipoMargem    String?  @map("tipo_margem")
+  funcionarios  Int      @default(0)
+  naoReservados Int      @default(0) @map("nao_reservados")
+  reservados    Int      @default(0)
+  perdidos      Int      @default(0)
+  criadoEm      DateTime @default(now()) @map("criado_em")
+  atualizadoEm  DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId, tipo])
+  @@map("convenios_controle")
+}
+
+model ConvenioCompleto {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  donoId    String   @map("dono_id") @db.VarChar(36)
+  nome      String
+  cnpj      String?
+  codigo    String?
+  detalhes  Json?
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@map("convenios_completos")
+}
+
+model Inconsistencia {
+  id             String    @id @default(uuid()) @db.VarChar(36)
+  donoId         String    @map("dono_id") @db.VarChar(36)
+  parceiro       String
+  codigoConvenio String    @map("codigo_convenio")
+  resolvido      Boolean   @default(false)
+  dataRegistro   DateTime? @map("data_registro")
+  observacao     String?   @db.Text
+  criadoEm       DateTime  @default(now()) @map("criado_em")
+  atualizadoEm   DateTime  @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, resolvido])
+  @@map("inconsistencias")
+}
+
+model MargemConsignado {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  donoId        String   @map("dono_id") @db.VarChar(36)
+  origem        String?
+  nome          String
+  ddd           String?
+  telefone      String?
+  margemLivre   Decimal? @map("margem_livre") @db.Decimal(15, 2)
+  status        String?
+  observacao    String?  @db.Text
+  mensagemBanco String?  @map("mensagem_banco") @db.Text
+  tags          Json     @default("[]")
+  criadoEm      DateTime @default(now()) @map("criado_em")
+  atualizadoEm  DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, origem])
+  @@map("margens_consignado")
+}
+
+model MargemSolicitacao {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  donoId      String   @map("dono_id") @db.VarChar(36)
+  nome        String?
+  cpf         String?
+  telefone    String?
+  margemLivre Decimal? @map("margem_livre") @db.Decimal(15, 2)
+  status      String   @default("pendente")
+  observacao  String?  @db.Text
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@map("margens_solicitacao")
+}
+
+model Simulacao {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  donoId        String   @map("dono_id") @db.VarChar(36)
+  convenio      String?
+  codEmpresa    String?  @map("cod_empresa")
+  cpf           String?
+  cpfCliente    String?  @map("cpf_cliente")
+  margemLivre   Decimal? @map("margem_livre") @db.Decimal(15, 2)
+  nome          String?
+  ddd           String?
+  telefone      String?
+  status        String?
+  observacao    String?  @db.Text
+  qtdContratosRefin Int? @map("qtd_contratos_refin")
+  contratosRefin    String? @map("contratos_refin") @db.Text
+  criadoEm      DateTime @default(now()) @map("criado_em")
+  atualizadoEm  DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, status])
+  @@map("simulacoes")
+}
+
+model Divida {
+  id                String   @id @default(uuid()) @db.VarChar(36)
+  donoId            String   @map("dono_id") @db.VarChar(36)
+  empregador        String
+  dividaTotal       Decimal? @map("divida_total") @db.Decimal(15, 2)
+  taxaSimulacao     Decimal? @map("taxa_simulacao") @db.Decimal(10, 4)
+  saldoClean        Decimal? @map("saldo_clean") @db.Decimal(15, 2)
+  cartaoCredito     Decimal? @map("cartao_credito") @db.Decimal(15, 2)
+  creditoPessoal    Decimal? @map("credito_pessoal") @db.Decimal(15, 2)
+  creditoConsignado Decimal? @map("credito_consignado") @db.Decimal(15, 2)
+  atraso            Decimal? @db.Decimal(15, 2)
+  limiteEmConta     Decimal? @map("limite_em_conta") @db.Decimal(15, 2)
+  criadoEm          DateTime @default(now()) @map("criado_em")
+  atualizadoEm      DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@map("dividas")
+}
+
+// Carteira de clientes (sem dados de automação)
+model ClienteCarteira {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  donoId     String   @map("dono_id") @db.VarChar(36)
+  cpf        String
+  cpfCliente String?  @map("cpf_cliente")
+  convenio   String?
+  codEmpresa String?  @map("cod_empresa")
+  nome       String?
+  telefone   String?
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, cpf])
+  @@map("clientes_carteira")
+}
+
+// ============================================================
+// IMPORTAÇÃO DE PLANILHAS E LEADS
+// ============================================================
+
+model ImportacaoPlanilha {
+  id             String           @id @default(uuid()) @db.VarChar(36)
+  donoId         String           @map("dono_id") @db.VarChar(36)
+  arquivo        String
+  totalLinhas    Int              @default(0) @map("total_linhas")
+  status         StatusImportacao @default(PENDENTE)
+  origem         String?
+  convenio       String?
+  codConvenio    String?          @map("cod_convenio")
+  duplicados     Int              @default(0)
+  criadorId      String?          @map("criador_id") @db.VarChar(36)
+  dataImportacao DateTime?        @map("data_importacao")
+  criadoEm       DateTime         @default(now()) @map("criado_em")
+  atualizadoEm   DateTime         @updatedAt @map("atualizado_em")
+
+  leads LeadImportado[]
+
+  @@index([donoId])
+  @@map("importacoes_planilha")
+}
+
+model LeadImportado {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  donoId         String?  @map("dono_id") @db.VarChar(36)
+  importacaoId   String?  @map("importacao_id") @db.VarChar(36)
+  funcionarioId  String?  @map("funcionario_id") @db.VarChar(36)
+  cpf            String?
+  nome           String?
+  telefone       String?
+  matricula      String?
+  convenio       String?
+  codConvenio    String?  @map("cod_convenio")
+  margem         String?
+  margemMenor    String?  @map("margem_menor")
+  statusLead     String   @default("novo") @map("status_lead")
+  observacao     String?  @db.Text
+  qtdContratos   String?  @map("qtd_contratos")
+  contratos      String?  @db.Text
+  qtdOutrosProdutos String? @map("qtd_outros_produtos")
+  outrosProdutos    String? @map("outros_produtos") @db.Text
+  origem         String?
+  // Demais campos mapeados da planilha (nascimento, e-mail, margens, contrato...)
+  dados          Json?
+  criadoEm       DateTime @default(now()) @map("criado_em")
+  atualizadoEm   DateTime @updatedAt @map("atualizado_em")
+
+  importacao ImportacaoPlanilha? @relation(fields: [importacaoId], references: [id], onDelete: Cascade)
+
+  @@index([donoId])
+  @@index([importacaoId])
+  @@index([funcionarioId])
+  @@index([donoId, cpf, codConvenio])
+  @@map("leads_importados")
+}
+
+model LeadSupervisor {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  donoId         String   @map("dono_id") @db.VarChar(36)
+  funcionarioId  String?  @map("funcionario_id") @db.VarChar(36)
+  origem         String?
+  cpf            String?
+  nome           String?
+  telefone       String?
+  convenio       String?
+  convenioCodigo String?  @map("convenio_codigo")
+  resultado      String?
+  margem         String?
+  observacao     String?  @db.Text
+  statusLead     String   @default("novo") @map("status_lead")
+  criadoEm       DateTime @default(now()) @map("criado_em")
+  atualizadoEm   DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@index([donoId, funcionarioId])
+  @@map("leads_supervisor")
+}
+
+model LeadFavorito {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  donoId      String   @map("dono_id") @db.VarChar(36)
+  usuarioId   String?  @map("usuario_id") @db.VarChar(36)
+  tipo        String   @default("gestao")
+  nome        String
+  filtros     Json
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId, tipo])
+  @@index([donoId, usuarioId])
+  @@map("leads_favoritos")
+}
+
+model CampanhaSupervisor {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  donoId    String   @map("dono_id") @db.VarChar(36)
+  nome      String
+  convenios Json
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  clientes CampanhaSupervisorCliente[]
+
+  @@index([donoId])
+  @@map("campanhas_supervisor")
+}
+
+model CampanhaSupervisorCliente {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  donoId     String   @map("dono_id") @db.VarChar(36)
+  campanhaId String   @map("campanha_id") @db.VarChar(36)
+  leadId     String?  @map("lead_id") @db.VarChar(36)
+  convenio   String
+  cpf        String?
+  matricula  String?
+  criadoEm   DateTime @default(now()) @map("criado_em")
+
+  campanha CampanhaSupervisor @relation(fields: [campanhaId], references: [id], onDelete: Cascade)
+
+  @@index([donoId])
+  @@index([campanhaId])
+  @@map("campanha_supervisor_clientes")
+}
+
+// ============================================================
+// WHATSAPP (DISPAROS E ATENDIMENTO COM IA)
+// ============================================================
+
+model WaLead {
+  id       String   @id @default(uuid()) @db.VarChar(36)
+  donoId   String   @map("dono_id") @db.VarChar(36)
+  telefone String
+  nome     String?
+  // novo | interesse | agendado | sem_interesse
+  status   String   @default("novo")
+  origem   String   @default("disparo")
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  conversa WaConversa?
+
+  @@unique([donoId, telefone])
+  @@map("wa_leads")
+}
+
+model WaConversa {
+  id             String       @id @default(uuid()) @db.VarChar(36)
+  donoId         String       @map("dono_id") @db.VarChar(36)
+  leadId         String       @unique @map("lead_id") @db.VarChar(36)
+  modo           ModoConversa @default(IA)
+  aberta         Boolean      @default(true)
+  precisaAtencao Boolean      @default(false) @map("precisa_atencao")
+  motivoAtencao  String?      @map("motivo_atencao")
+  ultimaMsgEm    DateTime?    @map("ultima_msg_em")
+  criadoEm       DateTime     @default(now()) @map("criado_em")
+  atualizadoEm   DateTime     @updatedAt @map("atualizado_em")
+
+  lead      WaLead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  mensagens WaMensagem[]
+
+  @@index([donoId])
+  @@map("wa_conversas")
+}
+
+model WaMensagem {
+  id         String      @id @default(uuid()) @db.VarChar(36)
+  conversaId String      @map("conversa_id") @db.VarChar(36)
+  remetente  RemetenteWa
+  conteudo   String      @db.Text
+  intencao   String?
+  enviadaEm  DateTime    @default(now()) @map("enviada_em")
+
+  conversa WaConversa @relation(fields: [conversaId], references: [id], onDelete: Cascade)
+
+  @@index([conversaId])
+  @@map("wa_mensagens")
+}
+
+model WaConhecimento {
+  id       String   @id @default(uuid()) @db.VarChar(36)
+  donoId   String   @map("dono_id") @db.VarChar(36)
+  titulo   String
+  conteudo String   @db.Text
+  ativo    Boolean  @default(true)
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@map("wa_conhecimento")
+}
+
+model WaAgenteConfig {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  donoId      String   @unique @map("dono_id") @db.VarChar(36)
+  nomeAgente  String   @default("Ana") @map("nome_agente")
+  saudacao    String   @default("Oi, tudo bem? Posso te passar uma informação rápida que pode te ajudar?") @db.VarChar(500)
+  promptExtra String?  @map("prompt_extra") @db.Text
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("wa_agente_config")
+}
+
+// ============================================================
+// IMOBILIÁRIO
+// ============================================================
+
+model ImobProposta {
+  id           String    @id @default(uuid()) @db.VarChar(36)
+  donoId       String    @map("dono_id") @db.VarChar(36)
+  criadorId    String?   @map("criador_id") @db.VarChar(36)
+  parceiro     String?
+  consultor    String?
+  dataInicio   DateTime? @map("data_inicio")
+  portal       String?
+  proposta     String?
+  aprovacao    String?
+  agendamento  DateTime?
+  documento    String?
+  modalidade   String?
+  produto      String?
+  acao         String?
+  etapa        String    @default("Proposta criada")
+  etapaAtualizadaEm DateTime? @map("etapa_atualizada_em")
+  observacao1  String?   @db.Text
+  observacao2  String?   @db.Text
+
+  // Cliente
+  cliente        String?
+  cpf            String?
+  contato        String?
+  emailCliente   String?   @map("email_cliente")
+  dataNascimento DateTime? @map("data_nascimento")
+  cidade         String?
+  habitantes     String?
+  situacaoProfissional String? @map("situacao_profissional")
+  estadoCivil    String?   @map("estado_civil")
+
+  // Renda
+  rendaPrincipal String?  @map("renda_principal")
+  rendaMensal    Decimal? @map("renda_mensal") @db.Decimal(15, 2)
+  rendaFamiliar  Decimal? @map("renda_familiar") @db.Decimal(15, 2)
+
+  // Cônjuge
+  conjugeNome       String?   @map("conjuge_nome")
+  conjugeEmail      String?   @map("conjuge_email")
+  conjugeCelular    String?   @map("conjuge_celular")
+  conjugeCpf        String?   @map("conjuge_cpf")
+  conjugeNascimento DateTime? @map("conjuge_nascimento")
+  conjugeRenda      Decimal?  @map("conjuge_renda") @db.Decimal(15, 2)
+
+  // Crédito pretendido
+  valorImovel           Decimal? @map("valor_imovel") @db.Decimal(15, 2)
+  valorFinanciamentoLiq Decimal? @map("valor_financiamento_liq") @db.Decimal(15, 2)
+  valorNecessario       Decimal? @map("valor_necessario") @db.Decimal(15, 2)
+  prazoPretendido       String?  @map("prazo_pretendido")
+  analiseCreditoStatus  String?  @map("analise_credito_status")
+
+  // Imóvel em garantia
+  numeroImovel       String? @map("numero_imovel")
+  cepImovel          String? @map("cep_imovel")
+  complementoImovel  String? @map("complemento_imovel")
+  tipoImovelGarantia String? @map("tipo_imovel_garantia")
+  pagandoImovel      String? @map("pagando_imovel")
+  matriculaImovel    String? @map("matricula_imovel")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  bancos     ImobPropostaBanco[]
+  documentos ImobDocumento[]
+
+  @@index([donoId])
+  @@index([criadorId])
+  @@map("imob_propostas")
+}
+
+// Um registro por banco consultado na proposta
+// (Itaú, Santander, Bari, Credita, Cashme, Ponte, Tcash, Inter, Bradesco, C6, Daycoval...)
+model ImobPropostaBanco {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  propostaId    String   @map("proposta_id") @db.VarChar(36)
+  banco         String
+  status        String?
+  valorAprovado Decimal? @map("valor_aprovado") @db.Decimal(15, 2)
+  criadoEm      DateTime @default(now()) @map("criado_em")
+  atualizadoEm  DateTime @updatedAt @map("atualizado_em")
+
+  proposta ImobProposta @relation(fields: [propostaId], references: [id], onDelete: Cascade)
+
+  @@unique([propostaId, banco])
+  @@map("imob_proposta_bancos")
+}
+
+model ImobDocumento {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  propostaId   String   @map("proposta_id") @db.VarChar(36)
+  donoId       String   @map("dono_id") @db.VarChar(36)
+  nome         String
+  nomeOriginal String   @map("nome_original")
+  mimeType     String?  @map("mime_type")
+  tamanho      Int?
+  caminho      String
+  criadoEm     DateTime @default(now()) @map("criado_em")
+
+  proposta ImobProposta @relation(fields: [propostaId], references: [id], onDelete: Cascade)
+
+  @@index([propostaId])
+  @@map("imob_documentos")
+}
+
+model ImobSimulacao {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  donoId      String   @map("dono_id") @db.VarChar(36)
+  tipo        String
+  criadorNome String?  @map("criador_nome")
+  dados       Json
+  resultado   Json
+  criadoEm    DateTime @default(now()) @map("criado_em")
+
+  @@index([donoId])
+  @@map("imob_simulacoes")
+}
+
+// ============================================================
+// INTEGRAÇÕES
+// ============================================================
+
+model IntegracaoUsuario {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  donoId       String   @map("dono_id") @db.VarChar(36)
+  nome         String?
+  tipo         String?
+  configuracao Json
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([donoId])
+  @@map("integracoes_usuario")
+}
+
+// ============================================================
+// ASSISTENTE DE IA (configuração única do sistema, só o master altera)
+// ============================================================
+
+model ConfigAssistente {
+  id                String   @id @default("padrao") @db.VarChar(20)
+  provedor          String   @default("anthropic")
+  ativo             Boolean  @default(true)
+  instrucoesExtras  String?  @map("instrucoes_extras") @db.Text
+  // Por provedor: { chaveCifrada, final, modelo }. A chave nunca volta para o navegador.
+  provedores        Json
+  atualizadoPorId   String?  @map("atualizado_por_id") @db.VarChar(36)
+  atualizadoEm      DateTime @updatedAt @map("atualizado_em")
+
+  @@map("config_assistente")
+}
