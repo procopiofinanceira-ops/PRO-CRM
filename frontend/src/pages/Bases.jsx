@@ -265,11 +265,8 @@ export default function Bases() {
           )}
 
           <div
-            className={
-              visao === 'lista'
-                ? 'flex flex-col gap-3'
-                : 'grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-4'
-            }
+            className={visao === 'lista' ? 'flex flex-col gap-3' : 'grid'}
+            style={visao === 'lista' ? undefined : { gridTemplateColumns: 'repeat(auto-fill, minmax(16rem, 1fr))', gap: '1.25rem' }}
           >
             {visiveis.map((c, i) => {
               const Item = visao === 'lista' ? ConvenioLinha : ConvenioQuadrado;

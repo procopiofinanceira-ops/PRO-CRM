@@ -450,7 +450,7 @@ export default function Usuarios() {
 
       {visao === 'cards' && (
         <>
-          <div className="stagger grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
+          <div className="stagger grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(15rem, 1fr))', gap: '1.25rem' }}>
             {filtrados.map((u, i) => (
               <article
                 key={u.id}
