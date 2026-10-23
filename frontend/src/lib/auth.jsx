@@ -82,9 +82,12 @@ export function AuthProvider({ children }) {
     }
   };
 
+  /** Troca dados do usuário logado na tela (ex.: foto) sem novo login. */
+  const atualizarUsuario = (u) => setUsuario(u);
+
   return (
     <AuthContext.Provider
-      value={{ usuario, impersonadoPor, carregando, entrar, verificarCodigo, entrarComo, voltar, sair }}
+      value={{ usuario, impersonadoPor, carregando, entrar, verificarCodigo, entrarComo, voltar, sair, atualizarUsuario }}
     >
       {children}
     </AuthContext.Provider>

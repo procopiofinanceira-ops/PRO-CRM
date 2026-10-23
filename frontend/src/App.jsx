@@ -23,6 +23,7 @@ import Simulador from './pages/Simulador.jsx';
 import Gestao from './pages/Gestao.jsx';
 import Usuarios from './pages/Usuarios.jsx';
 import ConfigAssistente from './pages/ConfigAssistente.jsx';
+import Promotores from './pages/Promotores.jsx';
 
 export default function App() {
   const { usuario, carregando } = useAuth();
@@ -58,6 +59,7 @@ export default function App() {
           <Route path="imobiliario" element={<Imobiliario />} />
           <Route path="simulador" element={<Simulador />} />
           <Route path="gestao" element={<Gestao />} />
+          <Route path="promotores" element={<Promotores />} />
           <Route path="usuarios" element={<Usuarios />} />
           <Route path="configuracoes/assistente" element={<ConfigAssistente />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -36,8 +36,14 @@ TELAS (menu lateral)
 - Gestão (master, gerente, BKO): cartões dos supervisores com "Acessar ambiente". O master também vê ranking de uso,
   bases importadas, convênios e o resumo do dia de cada equipe. Ao acessar o ambiente de outro usuário aparece uma faixa
   vermelha no topo; "Voltar ao meu usuário" retorna.
-- Oportunidades: funil em colunas (Novo, Contactando, 2º dia, 3º dia, Proposta, Ganhamos, Perdemos). Arraste o cartão
-  para mudar de estágio; ao mover para Perdemos pede o motivo.
+- Oportunidades: funil em colunas (Novo, Contactando, 2º dia, 3º dia, Em tratativa, Proposta, Ganhamos, Perdido). Arraste
+  o cartão para mudar de estágio. Em tratativa, Proposta e Ganhamos exigem a receita esperada; Perdido exige o motivo
+  da perda. Se faltar, o modal abre já com o aviso. Clique no cartão para abrir o modal do cliente: dados, margens,
+  negociação (promotor responsável, receita esperada, agendar retorno com data e hora, anotações internas) e a aba
+  Histórico com tudo que mudou. O botão verde abre o WhatsApp. Cartões com sino têm retorno para fazer hoje ou atrasado.
+- Promotores (master e supervisor): clientes que estão com cada promotor. Visão geral por convênio, lista de promotores
+  com contagem por estágio e detalhe do promotor, onde dá para filtrar por estágio e motivo, transferir clientes para
+  outro promotor da equipe e excluir por convênio ou todos. O master também libera os perdidos que estavam com promotores.
 - Contatos: cadastro de pessoas e empresas, com busca e favoritos.
 - Bases: onde ficam os leads importados. Aba Leads (busca, filtros por situação e responsável, filtros salvos, e o botão
   Distribuir) e aba Importações. "Nova importação" abre um assistente em 4 passos: convênio, arquivo (.xlsx, .xls ou .csv),

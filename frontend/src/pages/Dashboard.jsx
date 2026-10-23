@@ -1,12 +1,13 @@
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarClock, FolderKanban, Target, Trophy, Users } from 'lucide-react';
+import { Bell, CalendarClock, FolderKanban, Target, Trophy, Users } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { dataHoraBR, moeda } from '../lib/format.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useContagem } from '../lib/useContagem.js';
 import { BarrasDuplas, Sparkline, useEntrada } from '../components/Graficos.jsx';
 import { EstadoVazio, Skeleton } from '../components/Estados.jsx';
-import { ESTAGIOS } from './Oportunidades.jsx';
+import { ESTAGIOS } from '../lib/oportunidade.js';
 
 const saudacao = () => {
   const h = new Date().getHours();
@@ -79,16 +80,6 @@ function Rosca({ fatias, total }) {
   );
 }
 
-const STROKE = {
-  'bg-slate-400': 'stroke-slate-400',
-  'bg-sky-500': 'stroke-sky-500',
-  'bg-amber-500': 'stroke-amber-500',
-  'bg-orange-500': 'stroke-orange-500',
-  'bg-violet-500': 'stroke-violet-500',
-  'bg-emerald-500': 'stroke-emerald-500',
-  'bg-primary': 'stroke-primary',
-};
-
 function PainelSkeleton() {
   return (
     <div className="space-y-6" role="status" aria-label="Carregando">
@@ -118,7 +109,7 @@ export default function Dashboard() {
     .reduce((s, o) => s + o.quantidade, 0);
   const total = data.oportunidades.reduce((s, o) => s + o.quantidade, 0);
   const maior = Math.max(1, ...data.oportunidades.map((o) => o.quantidade));
-  const fatias = ESTAGIOS.map((e) => ({ ...e, quantidade: porEstagio[e.valor]?.quantidade ?? 0, stroke: STROKE[e.cor] }));
+  const fatias = ESTAGIOS.map((e) => ({ ...e, quantidade: porEstagio[e.valor]?.quantidade ?? 0 }));
   const proximos = data.proximosEventos.length;
   const { oportunidadesCriadas, leadsTrabalhados } = data.serie;
   const trabalhadosHoje = leadsTrabalhados.at(-1)?.valor ?? 0;
@@ -199,6 +190,39 @@ export default function Dashboard() {
           )}
         </section>
       </div>
+
+      {/* Retornos agendados (hoje ou atrasados) */}
+      {data.retornos?.total > 0 && (
+        <section className="card animate-fade-up border-amber-500/40 p-6" style={{ animationDelay: '360ms' }}>
+          <div className="mb-4 flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/15 text-amber-500">
+              <Bell size={18} className="animate-pulse" />
+            </span>
+            <div>
+              <h2 className="font-semibold">Retornos para fazer</h2>
+              <p className="text-xs text-muted">
+                <span className="num">{data.retornos.total}</span> cliente{data.retornos.total > 1 ? 's' : ''} com retorno agendado para hoje ou atrasado
+              </p>
+            </div>
+          </div>
+          <ul className="stagger grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {data.retornos.itens.map((r, i) => (
+              <li key={r.id} style={{ '--i': i }}>
+                <Link to="/oportunidades" className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface2/40 px-3 py-2.5 transition hover:border-amber-500/50 hover:bg-amber-500/5">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{r.nome}</span>
+                    <span className="block truncate text-xs text-muted">{r.empresa ?? 'Sem convênio'}</span>
+                  </span>
+                  <span className="num shrink-0 text-xs text-amber-600 dark:text-amber-400">
+                    {new Date(r.dataRetorno).toLocaleDateString('pt-BR', { timeZone: 'UTC', day: '2-digit', month: '2-digit' })}
+                    {r.horaRetorno ? ` ${r.horaRetorno}` : ''}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Funil */}
       <section className="card animate-fade-up p-6" style={{ animationDelay: '400ms' }}>

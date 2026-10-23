@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { BarChart3, Eye, EyeOff, Home, Loader2, Moon, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useAuth } from '../lib/auth.jsx';
 import { useTheme } from '../lib/theme.jsx';
+import logoBranca from '../assets/logo-completa-branca.png';
+import simbolo from '../assets/logo-simbolo.png';
 
 const DESTAQUES = [
   { icone: Users, titulo: 'Equipe e leads no lugar certo', texto: 'Distribua bases e acompanhe cada promotor.' },
@@ -66,12 +68,9 @@ export default function Login() {
           style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)', backgroundSize: '26px 26px' }}
         />
 
-        <div className="relative flex animate-fade-up items-center gap-3">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/20 text-xl font-bold backdrop-blur">P</span>
-          <div className="leading-tight">
-            <p className="text-xl font-semibold tracking-tight">PRO-CRM</p>
-            <p className="text-sm text-white/75">Procópio Financeira</p>
-          </div>
+        <div className="relative animate-fade-up">
+          <img src={logoBranca} alt="Procópio Soluções Financeiras" className="h-28 w-auto drop-shadow-[0_6px_24px_rgba(0,0,0,0.25)]" draggable={false} />
+          <p className="kicker mt-3 !text-white/80">PRO-CRM</p>
         </div>
 
         <div className="relative max-w-lg">
@@ -106,7 +105,7 @@ export default function Login() {
 
         <form onSubmit={enviar} className="w-full max-w-sm animate-fade-up">
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <span className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-primary to-primary/70 font-bold text-primary-fg shadow-glow">P</span>
+            <img src={simbolo} alt="Procópio" className="h-11 w-auto drop-shadow-[0_0_10px_rgb(var(--primary)/0.4)]" draggable={false} />
             <span className="text-lg font-semibold tracking-tight">PRO-CRM</span>
           </div>
 

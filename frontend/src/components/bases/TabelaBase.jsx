@@ -10,19 +10,23 @@ import {
   Columns3,
   Download,
   Loader2,
+  Lock,
   Search,
   Share2,
+  Target,
+  SlidersHorizontal,
   Star,
-  Wallet,
   X,
 } from 'lucide-react';
 import { api, baixarArquivo } from '../../lib/api.js';
 import { CAMPOS } from '../../lib/mapeamento.js';
 import { dataBR, moeda } from '../../lib/format.js';
 import { STATUS_LEAD, formatarCpf } from '../../lib/leads.js';
+import { useAuth } from '../../lib/auth.jsx';
 import { useEquipe } from '../../lib/useEquipe.js';
 import { EstadoVazio, LinhasSkeleton } from '../Estados.jsx';
 import DistribuirModal from '../DistribuirModal.jsx';
+import Modal from '../Modal.jsx';
 import { useToast } from '../Toast.jsx';
 import LeadModal from './LeadModal.jsx';
 import Situacao from './Situacao.jsx';
@@ -40,16 +44,56 @@ const lerColunasSalvas = () => {
   }
 };
 
+/** Marca na frente do cliente: livre, meu ou indisponível (só quem gerencia vê com quem está). */
+/** "3 d" / "hoje": quanto falta para o cliente voltar a ficar disponível. */
+function restam(expiraEm) {
+  if (!expiraEm) return null;
+  const dias = Math.ceil((new Date(expiraEm).getTime() - Date.now()) / 86400000);
+  return dias <= 1 ? 'libera hoje' : `libera em ${dias} d`;
+}
+
+function Disponibilidade({ reserva }) {
+  if (!reserva) return <span className="text-xs text-muted">Disponível</span>;
+  if (reserva.minha) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+        <Lock size={11} /> Com você{restam(reserva.expiraEm) && <span className="font-normal opacity-80">· {restam(reserva.expiraEm)}</span>}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+      <Lock size={11} /> Indisponível{reserva.por ? <span className="font-normal opacity-80">· {reserva.por}</span> : null}
+      {reserva.por && restam(reserva.expiraEm) ? <span className="font-normal opacity-70">· {restam(reserva.expiraEm)}</span> : null}
+    </span>
+  );
+}
+
 /**
  * Tabela de dados em tela cheia de uma base (ou de todos os leads).
  * convenio: nome do convênio para filtrar; null = todos.
  */
-export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onClose }) {
+export default function TabelaBase({ convenio, equipeId = '', qInicial = '', podeAtribuir: podeAtribuirProp, onClose }) {
+  const { usuario: eu } = useAuth();
+  const master = eu.perfil === 'MASTER';
+  const [equipe, setEquipe] = useState(equipeId);
+  // As bases das outras equipes são só para consulta: distribuir e atribuir valem na equipe do próprio usuário
+  const podeAtribuir = podeAtribuirProp && (!master || equipe === eu.id);
   const qc = useQueryClient();
   const toast = useToast();
-  const { usuarios, nomePorId } = useEquipe(podeAtribuir);
+  const { usuarios, nomePorId } = useEquipe(podeAtribuirProp);
 
+  const [nome, setNome] = useState('');
+  const [cpf, setCpf] = useState('');
+  const [telefone, setTelefone] = useState('');
+  const [matricula, setMatricula] = useState('');
+  // A busca vinda de fora (ex.: CPF repetido, busca global) entra na caixa principal
   const [q, setQ] = useState(qInicial);
+  const [margemDe, setMargemDe] = useState('');
+  const [margemAte, setMargemAte] = useState('');
+  const [painel, setPainel] = useState(false);
+  const [de, setDe] = useState('');
+  const [ate, setAte] = useState('');
   const [status, setStatus] = useState('');
   const [responsavel, setResponsavel] = useState(''); // '' | 'sem' | id
   const [pagina, setPagina] = useState(1);
@@ -67,6 +111,15 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
 
   const filtros = {
     ...(q && { q }),
+    ...(master && equipe && { equipeId: equipe }),
+    ...(nome && { nome }),
+    ...(cpf && { cpf }),
+    ...(telefone && { telefone }),
+    ...(matricula && { matricula }),
+    ...(margemDe && { margemDe }),
+    ...(margemAte && { margemAte }),
+    ...(de && { de }),
+    ...(ate && { ate }),
     ...(status && { statusLead: status }),
     ...(convenio && { convenioNome: convenio }),
     ...(responsavel === 'sem' && { semResponsavel: '1' }),
@@ -131,9 +184,15 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
   };
 
   const colunas = [
+    {
+      id: 'reserva',
+      rotulo: 'Disponibilidade',
+      celula: (l) => <Disponibilidade reserva={l.reserva} />,
+    },
     { id: 'nome', rotulo: 'Nome', ordenavel: true, celula: (l) => <span className="font-medium">{l.nome ?? '—'}</span> },
     { id: 'cpf', rotulo: 'CPF', ordenavel: true, celula: (l) => <span className="num">{formatarCpf(l.cpf)}</span> },
     { id: 'telefone', rotulo: 'Telefone', ordenavel: true, celula: (l) => <span className="num">{l.telefone ?? '—'}</span> },
+    ...(master && !equipe ? [{ id: 'equipe', rotulo: 'Equipe', celula: (l) => <span className="text-muted">{nomePorId[l.donoId] ?? '—'}</span> }] : []),
     ...(convenio ? [] : [{ id: 'convenio', rotulo: 'Convênio', ordenavel: true, celula: (l) => l.convenio ?? '—' }]),
     { id: 'matricula', rotulo: 'Matrícula', celula: (l) => <span className="num">{l.matricula ?? '—'}</span> },
     { id: 'margem', rotulo: 'Margem livre', celula: (l) => <span className="num">{l.margem ? moeda(l.margem) : '—'}</span> },
@@ -161,7 +220,7 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
   };
 
   // ---- seleção ----
-  const idsPagina = itens.map((l) => l.id);
+  const idsPagina = itens.filter((l) => !l.reserva).map((l) => l.id);
   const paginaToda = idsPagina.length > 0 && idsPagina.every((id) => selecionados.has(id));
   const alternarPagina = () => {
     setTodosOsResultados(false);
@@ -203,11 +262,17 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
     onError: (e) => toast.erro(e.message),
   });
 
-  const carteira = useMutation({
-    mutationFn: () => api('/leads/enviar-carteira', { method: 'POST', body: alvo() }),
+  // Master e supervisor escolhem para qual promotor o cliente vai; o promotor envia direto para si
+  const [enviando, setEnviando] = useState(false);
+  const [destino, setDestino] = useState('');
+  const oportunidade = useMutation({
+    mutationFn: (responsavelId) =>
+      api('/leads/enviar-oportunidade', { method: 'POST', body: { ...alvo(), ...(responsavelId && { responsavelId }) } }),
     onSuccess: (r) => {
-      toast.sucesso(`${r.criados.toLocaleString('pt-BR')} cliente(s) enviado(s) para a carteira${r.ignorados ? ` (${r.ignorados} já estavam lá)` : ''}.`);
+      toast.sucesso(`${r.criados.toLocaleString('pt-BR')} cliente(s) enviado(s) para Oportunidades (Novo) e para a carteira${r.ignorados ? ` · ${r.ignorados} indisponível(is), já estavam com alguém` : ''}.`);
       limparSelecao();
+      setEnviando(false);
+      qc.invalidateQueries({ queryKey: ['/oportunidades'] });
       qc.invalidateQueries({ queryKey: ['/carteira'] });
     },
     onError: (e) => toast.erro(e.message),
@@ -234,7 +299,8 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
     select: (r) => r.itens,
   });
   const salvarFavorito = useMutation({
-    mutationFn: (nome) => api('/leads-favoritos', { method: 'POST', body: { nome, filtros: { q, status, responsavel } } }),
+    mutationFn: (rotulo) =>
+      api('/leads-favoritos', { method: 'POST', body: { nome: rotulo, filtros: { q, nome, cpf, telefone, matricula, margemDe, margemAte, de, ate, status, responsavel } } }),
     onSuccess: () => {
       toast.sucesso('Filtro salvo.');
       qc.invalidateQueries({ queryKey: ['/leads-favoritos'] });
@@ -244,18 +310,43 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
     const f = favoritos.find((x) => x.id === id);
     if (!f) return;
     setQ(f.filtros.q ?? '');
+    setNome(f.filtros.nome ?? '');
+    setMargemDe(f.filtros.margemDe ?? '');
+    setMargemAte(f.filtros.margemAte ?? '');
+    setCpf(f.filtros.cpf ?? '');
+    setTelefone(f.filtros.telefone ?? '');
+    setMatricula(f.filtros.matricula ?? '');
+    setDe(f.filtros.de ?? '');
+    setAte(f.filtros.ate ?? '');
     setStatus(f.filtros.status ?? '');
     setResponsavel(f.filtros.responsavel ?? '');
     setPagina(1);
     limparSelecao();
   };
-  const filtrosAtivos = Boolean(q || status || responsavel);
+  const camposAtivos = [master && equipe, nome, cpf, telefone, matricula, margemDe, margemAte, de, ate, status, responsavel].filter(Boolean).length;
+  const filtrosAtivos = Boolean(q ||  nome || cpf || telefone || matricula || de || ate || status || responsavel);
+  const limparFiltros = () => {
+    [setQ, setNome, setCpf, setTelefone, setMatricula, setMargemDe, setMargemAte, setDe, setAte, setStatus, setResponsavel].forEach((f) => f(''));
+    setPagina(1);
+    limparSelecao();
+  };
+  const soNumerosVirgula = (set) => (e) => {
+    // aceita o sinal de menos só na frente (margem negativa)
+    set(e.target.value.replace(/[^0-9.,-]/g, '').replace(/(?!^)-/g, ''));
+    setPagina(1);
+    limparSelecao();
+  };
+  const soDigitos = (set) => (e) => {
+    set(e.target.value.replace(/[^0-9]/g, ''));
+    setPagina(1);
+    limparSelecao();
+  };
 
   const IconeOrdem = ({ id }) =>
     ordem.campo !== id ? <ArrowUpDown size={12} className="opacity-40" /> : ordem.dir === 'asc' ? <ArrowUp size={12} className="text-accent" /> : <ArrowDown size={12} className="text-accent" />;
 
   return createPortal(
-    <div className="fixed inset-0 z-40 flex animate-fade-in flex-col bg-bg" role="dialog" aria-modal="true" aria-label={convenio ?? 'Todos os leads'}>
+    <div className="fixed inset-0 z-40 flex animate-fade-in flex-col overflow-y-auto bg-bg" role="dialog" aria-modal="true" aria-label={convenio ?? 'Todos os leads'}>
       {/* Cabeçalho */}
       <header className="flex flex-wrap items-center gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-2xl lg:px-6">
         <button className="btn-outline !p-2" onClick={onClose} aria-label="Voltar para as bases">
@@ -291,23 +382,16 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
           <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-accent" />
           <input className="input pl-9" placeholder="Nome, CPF ou telefone…" value={q} onChange={mudarFiltro(setQ)} />
         </div>
-        <select className="input !w-auto" value={status} onChange={mudarFiltro(setStatus)} aria-label="Filtrar por situação">
-          <option value="">Todas as situações</option>
-          {STATUS_LEAD.map((s) => (
-            <option key={s.valor} value={s.valor}>{s.rotulo}</option>
-          ))}
-        </select>
-        {podeAtribuir && (
-          <select className="input !w-auto" value={responsavel} onChange={mudarFiltro(setResponsavel)} aria-label="Filtrar por responsável">
-            <option value="">Todos os responsáveis</option>
-            <option value="sem">Sem responsável</option>
-            {usuarios.map((u) => (
-              <option key={u.id} value={u.id}>{u.nome}</option>
-            ))}
-          </select>
-        )}
+        <button
+          className={`btn-outline ${painel || camposAtivos ? '!border-accent/60 !text-accent' : ''}`}
+          onClick={() => setPainel((v) => !v)}
+          aria-expanded={painel}
+        >
+          <SlidersHorizontal size={15} /> Filtros
+          {camposAtivos > 0 && <span className="num rounded-full bg-accent/20 px-1.5 text-[10px] text-accent">{camposAtivos}</span>}
+        </button>
         {filtrosAtivos && (
-          <button className="btn-ghost text-primary" onClick={() => { setQ(''); setStatus(''); setResponsavel(''); setPagina(1); limparSelecao(); }}>
+          <button className="btn-ghost text-primary" onClick={limparFiltros}>
             <X size={14} /> Limpar
           </button>
         )}
@@ -354,6 +438,75 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
         </div>
       </div>
 
+      {painel && (
+        <div className="grid animate-scale-in gap-4 border-b border-line bg-surface/40 px-4 py-4 backdrop-blur sm:grid-cols-2 lg:grid-cols-4 lg:px-6">
+          {master && (
+            <div>
+              <label className="label" htmlFor="tb-eq">Equipe</label>
+              <select id="tb-eq" className="input" value={equipe} onChange={mudarFiltro(setEquipe)}>
+                <option value="">Todas as equipes</option>
+                {usuarios.filter((u) => ['SUPERVISOR', 'MASTER'].includes(u.perfil)).map((u) => (
+                  <option key={u.id} value={u.id}>{u.nome}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="label" htmlFor="tb-nome">Nome</label>
+            <input id="tb-nome" className="input" value={nome} onChange={mudarFiltro(setNome)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="tb-cpf">CPF</label>
+            <input id="tb-cpf" className="input num" inputMode="numeric" value={cpf} onChange={soDigitos(setCpf)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="tb-tel">Telefone</label>
+            <input id="tb-tel" className="input num" inputMode="numeric" value={telefone} onChange={soDigitos(setTelefone)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="tb-mat">Matrícula</label>
+            <input id="tb-mat" className="input num" value={matricula} onChange={mudarFiltro(setMatricula)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="tb-sit">Situação</label>
+            <select id="tb-sit" className="input" value={status} onChange={mudarFiltro(setStatus)}>
+              <option value="">Todas</option>
+              {STATUS_LEAD.map((s) => (
+                <option key={s.valor} value={s.valor}>{s.rotulo}</option>
+              ))}
+            </select>
+          </div>
+          {podeAtribuir && (
+            <div>
+              <label className="label" htmlFor="tb-resp">Responsável</label>
+              <select id="tb-resp" className="input" value={responsavel} onChange={mudarFiltro(setResponsavel)}>
+                <option value="">Todos</option>
+                <option value="sem">Sem responsável</option>
+                {usuarios.map((u) => (
+                  <option key={u.id} value={u.id}>{u.nome}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="label" htmlFor="tb-mde">Margem livre — de</label>
+            <input id="tb-mde" className="input num" placeholder="Ex.: -500 ou 1.000,50" value={margemDe} onChange={soNumerosVirgula(setMargemDe)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="tb-mate">Margem livre — até</label>
+            <input id="tb-mate" className="input num" placeholder="Sem limite" value={margemAte} onChange={soNumerosVirgula(setMargemAte)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="tb-de">Importado de</label>
+            <input id="tb-de" type="date" className="input num" value={de} onChange={mudarFiltro(setDe)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="tb-ate">Importado até</label>
+            <input id="tb-ate" type="date" className="input num" value={ate} onChange={mudarFiltro(setAte)} />
+          </div>
+        </div>
+      )}
+
       {/* Faixa "selecionar todos os resultados" */}
       {paginaToda && total > itens.length && (
         <div className="flex animate-fade-in items-center justify-center gap-3 border-b border-line bg-accent/10 px-4 py-2 text-sm">
@@ -374,7 +527,7 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
       )}
 
       {/* Tabela */}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-[26rem] flex-1 overflow-auto">
         <table className="w-full min-w-max text-left text-sm">
           <thead className="sticky top-0 z-10 bg-surface/95 text-xs backdrop-blur">
             <tr className="border-b border-line">
@@ -413,7 +566,8 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
                     <input
                       type="checkbox"
                       checked={marcado}
-                      disabled={todosOsResultados}
+                      disabled={todosOsResultados || Boolean(l.reserva)}
+                      title={l.reserva ? 'Cliente indisponível' : undefined}
                       onChange={() => alternarUm(l.id)}
                       aria-label={`Selecionar ${l.nome ?? 'lead'}`}
                       className="h-4 w-4 accent-[rgb(var(--accent))]"
@@ -496,14 +650,51 @@ export default function TabelaBase({ convenio, qInicial = '', podeAtribuir, onCl
             </div>
           )}
 
-          <button className="btn-outline !py-1.5" disabled={carteira.isPending} onClick={() => carteira.mutate()}>
-            {carteira.isPending ? <Loader2 size={14} className="animate-spin" /> : <Wallet size={14} />} Enviar para a carteira
-          </button>
+          {/* As bases de outras equipes são só para consulta do master */}
+          {(!master || equipe === eu.id) && (
+            <button
+              className="btn-outline !py-1.5"
+              disabled={oportunidade.isPending}
+              onClick={() => (podeAtribuirProp ? setEnviando(true) : oportunidade.mutate())}
+            >
+              {oportunidade.isPending ? <Loader2 size={14} className="animate-spin" /> : <Target size={14} />} Enviar para oportunidades
+            </button>
+          )}
 
           <button className="btn-ghost ml-auto !py-1.5" onClick={limparSelecao}>
             <X size={14} /> Limpar
           </button>
         </div>
+      )}
+
+      {enviando && (
+        <Modal titulo="Enviar para oportunidades" onClose={() => setEnviando(false)} largura="max-w-md">
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              {qtdSelecionada.toLocaleString('pt-BR')} cliente(s) viram oportunidades no estágio <strong className="text-text">Novo</strong> e entram na carteira.
+              Quem já estiver com alguém é ignorado.
+            </p>
+            <div>
+              <label className="label" htmlFor="destino-op">Para quem enviar</label>
+              <select id="destino-op" className="input" value={destino} onChange={(e) => setDestino(e.target.value)}>
+                <option value="">Manter o responsável atual (ou eu, se não tiver)</option>
+                <option value={eu.id}>Eu mesmo</option>
+                {usuarios
+                  .filter((u) => u.perfil === 'PROMOTOR' && u.superiorId === eu.id)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>{u.nome}</option>
+                  ))}
+              </select>
+              <p className="mt-1 text-xs text-muted">O promotor escolhido recebe um aviso com a quantidade de clientes.</p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-outline" onClick={() => setEnviando(false)}>Cancelar</button>
+              <button type="button" className="btn-primary" disabled={oportunidade.isPending} onClick={() => oportunidade.mutate(destino)}>
+                {oportunidade.isPending ? <Loader2 size={15} className="animate-spin" /> : <Target size={15} />} Enviar
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {aberto && <LeadModal lead={aberto} podeAtribuir={podeAtribuir} onClose={() => setAberto(null)} />}

@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { autenticar } from '../middleware/auth.js';
 import { criarNotificacao } from '../lib/notificacoes.js';
+import { paraNumero } from '../lib/margem.js';
+import { garantirNaCarteira, reservasPorCpf, veNomeDeQuemPegou } from '../lib/oportunidadeRegras.js';
+import { escopoLeitura } from '../lib/escopoBases.js';
 
 // ============================================================
 // Importações (bases) — quem importa: master ou usuário com permissão
@@ -58,6 +61,7 @@ function normalizarRegistro(r, importacao) {
     telefone: apenasDigitos(celular1),
     matricula: limpo(matricula),
     margem: limpo(emp_livre),
+    margemValor: paraNumero(emp_livre),
     dados: Object.keys(dados).length ? dados : undefined,
     convenio: importacao.convenio,
     codConvenio: importacao.codConvenio,
@@ -148,9 +152,13 @@ const escopoLeads = (req) => ({
 const SEM_CONVENIO = '(sem convênio)';
 
 /** Filtros da base de leads (query string ou corpo), sempre dentro do escopo de quem pede. */
-function montarWhere(req, f = {}) {
-  const where = escopoLeads(req);
+function montarWhere(req, f = {}, { leitura = false } = {}) {
+  // leitura: inclui as bases compartilhadas do master; ações que alteram leads ficam só na equipe
+  const where = leitura ? escopoLeitura(req) : escopoLeads(req);
   const { q, statusLead, importacaoId, convenio, convenioNome, funcionarioId, semResponsavel } = f;
+  // O master pode olhar uma equipe específica (as bases dos supervisores)
+  if (leitura && req.usuario.perfil === 'MASTER' && f.equipeId) where.donoId = String(f.equipeId);
+  const E = [];
 
   if (statusLead) where.statusLead = String(statusLead);
   if (semResponsavel === '1' || semResponsavel === true) where.funcionarioId = null;
@@ -163,6 +171,20 @@ function montarWhere(req, f = {}) {
   if (t) {
     where.OR = [{ nome: { contains: t } }, { cpf: { contains: t.replace(/\D/g, '') || t } }, { telefone: { contains: t } }];
   }
+  // Filtros por campo (cada um restringe o resultado, e todos se combinam)
+  const campo = (v) => String(v ?? '').trim();
+  const digitos = (v) => campo(v).replace(/[^0-9]/g, '');
+  const dia = (v) => (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(campo(v)) ? campo(v) : null);
+  if (campo(f.nome)) E.push({ nome: { contains: campo(f.nome) } });
+  if (digitos(f.cpf)) E.push({ cpf: { contains: digitos(f.cpf) } });
+  if (digitos(f.telefone)) E.push({ telefone: { contains: digitos(f.telefone) } });
+  if (campo(f.matricula)) E.push({ matricula: { contains: campo(f.matricula) } });
+  const valorMargem = (v) => (campo(v) === '' ? null : paraNumero(v));
+  if (valorMargem(f.margemDe) !== null) E.push({ margemValor: { gte: valorMargem(f.margemDe) } });
+  if (valorMargem(f.margemAte) !== null) E.push({ margemValor: { lte: valorMargem(f.margemAte) } });
+  if (dia(f.de)) E.push({ criadoEm: { gte: new Date(dia(f.de) + 'T00:00:00') } });
+  if (dia(f.ate)) E.push({ criadoEm: { lte: new Date(dia(f.ate) + 'T23:59:59.999') } });
+  if (E.length) where.AND = [...(where.AND ?? []), ...E];
   return where;
 }
 
@@ -174,7 +196,7 @@ function montarOrdem(ordenar) {
 }
 
 leads.get('/', async (req, res) => {
-  const where = montarWhere(req, req.query);
+  const where = montarWhere(req, req.query, { leitura: true });
   const limite = Math.min(Number(req.query.limite) || 50, 200);
   const pagina = Math.max(Number(req.query.pagina) || 1, 1);
 
@@ -187,7 +209,30 @@ leads.get('/', async (req, res) => {
       take: limite,
     }),
   ]);
-  res.json({ itens, total, pagina, limite });
+
+  // "Indisponível": o CPF já foi pego por alguém. Só master e supervisor veem quem pegou.
+  const reservas = await reservasPorCpf(itens.map((l) => l.cpf));
+  const nomes = new Map();
+  const reveladas = [...reservas.values()].filter((r) => veNomeDeQuemPegou(req, r));
+  if (reveladas.length) {
+    const ids = [...new Set(reveladas.map((r) => r.donoDoCliente))];
+    for (const u of await prisma.usuario.findMany({ where: { id: { in: ids } }, select: { id: true, nome: true } })) nomes.set(u.id, u.nome);
+  }
+  const comReserva = itens.map((l) => {
+    const r = reservas.get(apenasDigitos(l.cpf));
+    if (!r) return l;
+    const minha = r.donoDoCliente === req.usuario.id;
+    return { ...l, reserva: { minha, expiraEm: r.expiraEm, ...(!minha && veNomeDeQuemPegou(req, r) && { por: nomes.get(r.donoDoCliente) ?? null }) } };
+  });
+  res.json({ itens: comReserva, total, pagina, limite });
+});
+
+// Convênios em que um CPF aparece (para avisar o atendente antes de abordar o cliente)
+leads.get('/cpf/:cpf', async (req, res) => {
+  const cpf = String(req.params.cpf).replace(/\D/g, '');
+  if (cpf.length < 11) return res.json({ convenios: [] });
+  const grupos = await prisma.leadImportado.groupBy({ by: ['convenio'], where: { ...escopoLeitura(req), cpf } });
+  res.json({ convenios: grupos.map((g) => g.convenio ?? SEM_CONVENIO) });
 });
 
 // ---------- Ações em lote, exportação e carteira ----------
@@ -202,9 +247,14 @@ const alvoSchema = z.object({
 });
 
 /** Resolve o conjunto de leads alvo (ids marcados ou todo o filtro), sempre dentro do escopo. */
-function alvoDosLeads(req, dados) {
-  if (dados.ids?.length) return { ...escopoLeads(req), id: { in: dados.ids } };
-  if (dados.todosDoFiltro) return montarWhere(req, dados.filtros ?? {});
+function alvoDosLeads(req, dados, { leitura = false } = {}) {
+  // Ao escolher clientes para trabalhar, o master também fica só com as bases dele
+  const escopo = () => (leitura ? escopoLeitura(req, { paraTrabalhar: true }) : escopoLeads(req));
+  if (dados.ids?.length) return { ...escopo(), id: { in: dados.ids } };
+  if (dados.todosDoFiltro) {
+    const filtro = montarWhere(req, dados.filtros ?? {}, { leitura });
+    return leitura && req.usuario.perfil === 'MASTER' ? { AND: [filtro, escopo()] } : filtro;
+  }
   return null;
 }
 
@@ -253,7 +303,7 @@ const celulaCsv = (v) => {
 };
 
 leads.get('/exportar', async (req, res) => {
-  const where = montarWhere(req, req.query);
+  const where = montarWhere(req, req.query, { leitura: true });
   const itens = await prisma.leadImportado.findMany({ where, orderBy: montarOrdem(req.query.ordenar), take: MAX_LOTE });
 
   const idsResp = [...new Set(itens.map((l) => l.funcionarioId).filter(Boolean))];
@@ -284,31 +334,77 @@ leads.get('/exportar', async (req, res) => {
   res.send(`\uFEFF${linhas.join('\r\n')}`);
 });
 
-leads.post('/enviar-carteira', async (req, res) => {
-  const dados = alvoSchema.safeParse(req.body);
+/**
+ * Leads marcados viram oportunidades no estágio "Novo" (e entram na carteira, como toda oportunidade).
+ * Quem já foi pego (oportunidade com o mesmo CPF ainda dentro dos 5 dias de reserva) é ignorado: fica indisponível para os demais.
+ */
+const enviarOportunidadeSchema = alvoSchema.extend({
+  // Para quem mandar o cliente (master e supervisor); sem isso, vale o responsável do lead ou quem envia
+  responsavelId: z.string().uuid().optional(),
+});
+
+leads.post('/enviar-oportunidade', async (req, res) => {
+  const dados = enviarOportunidadeSchema.safeParse(req.body);
   if (!dados.success) return res.status(400).json({ erro: 'Dados inválidos.' });
 
-  const where = alvoDosLeads(req, dados.data);
+  // Só quem gerencia a equipe escolhe o responsável, e ele precisa ser da equipe
+  let destino = null;
+  if (dados.data.responsavelId && req.usuario.perfil !== 'PROMOTOR') {
+    destino = await prisma.usuario.findFirst({
+      where: { id: dados.data.responsavelId, ativo: true, OR: [{ id: req.donoId }, { superiorId: req.donoId }] },
+      select: { id: true, nome: true },
+    });
+    if (!destino) return res.status(400).json({ erro: 'O responsável escolhido não pertence à sua equipe.' });
+  }
+
+  const where = alvoDosLeads(req, dados.data, { leitura: true });
   if (!where) return res.status(400).json({ erro: 'Selecione os leads ou confirme a ação sobre todo o filtro.' });
 
   const origem = await prisma.leadImportado.findMany({ where: { ...where, cpf: { not: null } }, take: MAX_LOTE });
   if (!origem.length) return res.json({ criados: 0, ignorados: 0 });
 
-  const existentes = await prisma.clienteCarteira.findMany({
-    where: { donoId: req.donoId, cpf: { in: origem.map((l) => l.cpf) } },
-    select: { cpf: true, convenio: true },
-  });
-  const jaTem = new Set(existentes.map((e) => `${e.cpf}|${e.convenio ?? ''}`));
+  // Cliente já pego por alguém (qualquer estágio) fica indisponível para os demais
+  const jaTem = new Set((await reservasPorCpf(origem.map((l) => l.cpf))).keys());
 
-  const novos = [];
+  const agora = new Date();
+  const novas = [];
   for (const l of origem) {
-    const chave = `${l.cpf}|${l.convenio ?? ''}`;
-    if (jaTem.has(chave) || l.cpf.length < 11) continue;
-    jaTem.add(chave);
-    novos.push({ donoId: req.donoId, cpf: l.cpf, nome: l.nome, telefone: l.telefone, convenio: l.convenio, codEmpresa: l.codConvenio });
+    const cpf = apenasDigitos(l.cpf);
+    if (!cpf || jaTem.has(cpf)) continue;
+    jaTem.add(cpf);
+    const extra = l.dados && typeof l.dados === 'object' ? l.dados : {};
+    novas.push({
+      donoId: req.donoId,
+      nome: l.nome ?? 'Sem nome',
+      cpf,
+      telefone: l.telefone,
+      email: typeof extra.email === 'string' ? extra.email : null,
+      empresa: l.convenio,
+      estagio: 'novo',
+      responsavelId: req.usuario.perfil === 'PROMOTOR' ? req.usuario.id : destino?.id ?? l.funcionarioId ?? req.usuario.id,
+      detalhes: {
+        ...extra,
+        ...(l.matricula && { matricula: l.matricula }),
+        ...(l.margemValor !== null && l.margemValor !== undefined && { emp_livre: Number(l.margemValor) }),
+      },
+      estagioAtualizadoEm: agora,
+      atividades: [{ data: agora.toISOString(), usuario: req.usuario.nome, estagio: 'Novo', descricao: 'Enviado da base de leads' }],
+    });
   }
-  if (novos.length) await prisma.clienteCarteira.createMany({ data: novos });
-  res.json({ criados: novos.length, ignorados: origem.length - novos.length });
+  if (novas.length) await prisma.oportunidade.createMany({ data: novas });
+  for (const o of novas) await garantirNaCarteira(req.donoId, o);
+
+  // Avisa o promotor que recebeu clientes (não avisa quem mandou para si mesmo)
+  if (novas.length && destino && destino.id !== req.usuario.id) {
+    criarNotificacao({
+      donoId: req.donoId,
+      usuarioId: destino.id,
+      tipo: 'clientes_recebidos',
+      titulo: 'Novos clientes para você',
+      mensagem: `${req.usuario.nome} enviou ${novas.length} cliente(s) para as suas oportunidades.`,
+    });
+  }
+  res.json({ criados: novas.length, ignorados: origem.length - novas.length });
 });
 
 // ---------- Apoio à distribuição e acompanhamento ----------

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ChevronLeft, ChevronRight, Database, Layers, Search, SlidersHorizontal, Upload, X } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Database, LayoutGrid, Layers, Rows3, Search, SlidersHorizontal, Upload, X } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useEquipe } from '../lib/useEquipe.js';
-import BasesHud from '../components/bases/BasesHud.jsx';
-import ConvenioCard from '../components/bases/ConvenioCard.jsx';
+import BasesPainel from '../components/bases/BasesPainel.jsx';
+import { ConvenioLinha, ConvenioQuadrado, pctDe } from '../components/bases/ConvenioVisoes.jsx';
 import ConvenioDrawer from '../components/bases/ConvenioDrawer.jsx';
 import DuplicadosModal from '../components/bases/DuplicadosModal.jsx';
 import Importacoes from '../components/bases/Importacoes.jsx';
@@ -18,6 +18,13 @@ import PageHeader from '../components/PageHeader.jsx';
 import Tabs from '../components/Tabs.jsx';
 
 const POR_PAGINA = 12;
+
+const ORDENS = [
+  { valor: 'leads', rotulo: 'Mais registros', chave: (c) => c.totalLeads },
+  { valor: 'recentes', rotulo: 'Mais recentes', chave: (c) => new Date(c.ultimaAtualizacao ?? 0).getTime() },
+  { valor: 'parados', rotulo: 'Menos trabalhados', chave: (c) => -pctDe(c) },
+  { valor: 'sem', rotulo: 'Sem responsável', chave: (c) => c.semResponsavel },
+];
 
 export default function Bases() {
   const { usuario } = useAuth();
@@ -35,6 +42,23 @@ export default function Bases() {
   const [de, setDe] = useState('');
   const [ate, setAte] = useState('');
   const [pagina, setPagina] = useState(1);
+  const [ordem, setOrdem] = useState('leads');
+  const [equipe, setEquipe] = useState(''); // só o master: de qual supervisor ver as bases
+  const [visao, setVisao] = useState(() => {
+    try {
+      return localStorage.getItem('visao:bases') === 'lista' ? 'lista' : 'quadrados';
+    } catch {
+      return 'quadrados';
+    }
+  });
+  const trocarVisao = (v) => {
+    setVisao(v);
+    try {
+      localStorage.setItem('visao:bases', v);
+    } catch {
+      /* sem armazenamento: só não lembra */
+    }
+  };
 
   const [tabela, setTabela] = useState(null); // { convenio: string | null, q?: string }
   const [detalhe, setDetalhe] = useState(null);
@@ -56,11 +80,15 @@ export default function Bases() {
   const filtrosParams = new URLSearchParams({
     ...(q.trim() && { q: q.trim() }),
     ...(importador && { importador }),
+    ...(equipe && { equipe }),
     ...(de && { de }),
     ...(ate && { ate }),
   }).toString();
 
-  const resumo = useQuery({ queryKey: ['/bases/resumo'], queryFn: () => api('/bases/resumo') });
+  const resumo = useQuery({
+    queryKey: ['/bases/resumo', equipe],
+    queryFn: () => api(`/bases/resumo${equipe ? `?equipe=${equipe}` : ''}`),
+  });
   const convenios = useQuery({
     queryKey: ['/bases/convenios', filtrosParams],
     queryFn: () => api(`/bases/convenios${filtrosParams ? `?${filtrosParams}` : ''}`),
@@ -68,11 +96,17 @@ export default function Bases() {
     placeholderData: (anterior) => anterior,
   });
 
-  const itens = convenios.data ?? [];
+  const itens = useMemo(() => {
+    const chave = ORDENS.find((o) => o.valor === ordem).chave;
+    return [...(convenios.data ?? [])].sort((a, b) => chave(b) - chave(a));
+  }, [convenios.data, ordem]);
   const totalPaginas = Math.max(1, Math.ceil(itens.length / POR_PAGINA));
   const pagAtual = Math.min(pagina, totalPaginas);
   const visiveis = useMemo(() => itens.slice((pagAtual - 1) * POR_PAGINA, pagAtual * POR_PAGINA), [itens, pagAtual]);
-  const filtrosAtivos = Boolean(importador || de || ate);
+  const master = usuario.perfil === 'MASTER';
+  const filtrosAtivos = Boolean(importador || de || ate || equipe || ordem !== 'leads');
+  // Distribuir e editar só valem nas bases da própria equipe; as demais são para consulta do master
+  const daMinhaEquipe = (c) => !c.donoId || c.donoId === usuario.id;
 
   const atualizarTudo = () => {
     qc.invalidateQueries({ queryKey: ['/bases'] });
@@ -80,9 +114,9 @@ export default function Bases() {
     qc.invalidateQueries({ queryKey: ['/leads'] });
   };
 
-  const abrirTabela = (convenio) => {
+  const abrirTabela = (convenio, equipeId) => {
     setDetalhe(null);
-    setTabela({ convenio });
+    setTabela({ convenio, equipeId: equipeId ?? '' });
   };
 
   return (
@@ -101,7 +135,7 @@ export default function Bases() {
             )}
           </button>
         )}
-        <button className="btn-outline" onClick={() => setTabela({ convenio: null })}>
+        <button className="btn-outline" onClick={() => setTabela({ convenio: null, equipeId: master ? usuario.id : '' })}>
           <Layers size={15} /> {promotor ? 'Todos os meus leads' : 'Todos os leads'}
         </button>
         {podeImportar && (
@@ -111,7 +145,7 @@ export default function Bases() {
         )}
       </PageHeader>
 
-      <BasesHud r={resumo.data} podeGerir={podeGerir} />
+      <BasesPainel r={resumo.data} podeGerir={podeGerir} />
 
       {podeImportar && (
         <Tabs abas={[{ valor: 'bases', rotulo: 'Bases' }, { valor: 'importacoes', rotulo: 'Importações' }]} ativa={aba} onChange={setAba} />
@@ -131,23 +165,62 @@ export default function Bases() {
                 onChange={(e) => { setQ(e.target.value); setPagina(1); }}
               />
             </div>
-            {!promotor && (
-              <button
-                className={`btn-outline ${filtrosAbertos || filtrosAtivos ? '!border-accent/60 !text-accent' : ''}`}
-                onClick={() => setFiltrosAbertos((v) => !v)}
-                aria-expanded={filtrosAbertos}
-              >
-                <SlidersHorizontal size={15} /> Filtros
-                {filtrosAtivos && <span className="live-dot !bg-accent" />}
-              </button>
-            )}
-            <span className="num ml-auto text-xs text-muted">
-              {itens.length} convênio{itens.length === 1 ? '' : 's'}
-            </span>
+            <button
+              className={`btn-outline ${filtrosAbertos || filtrosAtivos ? '!border-accent/60 !text-accent' : ''}`}
+              onClick={() => setFiltrosAbertos((v) => !v)}
+              aria-expanded={filtrosAbertos}
+            >
+              <SlidersHorizontal size={15} /> Filtros
+              {filtrosAtivos && <span className="live-dot !bg-accent" />}
+            </button>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="num hidden text-xs text-muted sm:inline">
+                {itens.length} convênio{itens.length === 1 ? '' : 's'}
+              </span>
+              <div className="flex rounded-lg border border-line bg-surface2 p-0.5" role="group" aria-label="Modo de exibição">
+                {[
+                  ['quadrados', 'Cards', LayoutGrid],
+                  ['lista', 'Lista', Rows3],
+                ].map(([v, rotulo, Icone]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={visao === v}
+                    onClick={() => trocarVisao(v)}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                      visao === v ? 'bg-primary text-white shadow-glow' : 'text-muted hover:text-text'
+                    }`}
+                  >
+                    <Icone size={14} /> {rotulo}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {filtrosAbertos && !promotor && (
+          {filtrosAbertos && (
             <div className="card mb-4 grid animate-scale-in gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className="label" htmlFor="f-ord">Ordenar</label>
+                <select id="f-ord" className="input" value={ordem} onChange={(e) => { setOrdem(e.target.value); setPagina(1); }}>
+                  {ORDENS.filter((o) => podeGerir || o.valor !== 'sem').map((o) => (
+                    <option key={o.valor} value={o.valor}>{o.rotulo}</option>
+                  ))}
+                </select>
+              </div>
+              {master && (
+                <div>
+                  <label className="label" htmlFor="f-eq">Equipe</label>
+                  <select id="f-eq" className="input" value={equipe} onChange={(e) => { setEquipe(e.target.value); setPagina(1); }}>
+                    <option value="">Todas as equipes</option>
+                    {usuarios.filter((u) => ['SUPERVISOR', 'MASTER'].includes(u.perfil)).map((u) => (
+                      <option key={u.id} value={u.id}>{u.nome}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {!promotor && (
+              <>
               <div>
                 <label className="label" htmlFor="f-imp">Importado por</label>
                 <select id="f-imp" className="input" value={importador} onChange={(e) => { setImportador(e.target.value); setPagina(1); }}>
@@ -165,9 +238,11 @@ export default function Bases() {
                 <label className="label" htmlFor="f-ate">Importado até</label>
                 <input id="f-ate" type="date" className="input num" value={ate} onChange={(e) => { setAte(e.target.value); setPagina(1); }} />
               </div>
+              </>
+              )}
               <div className="flex items-end">
                 {filtrosAtivos && (
-                  <button className="btn-ghost text-primary" onClick={() => { setImportador(''); setDe(''); setAte(''); setPagina(1); }}>
+                  <button className="btn-ghost text-primary" onClick={() => { setImportador(''); setDe(''); setAte(''); setEquipe(''); setOrdem('leads'); setPagina(1); }}>
                     <X size={14} /> Limpar filtros
                   </button>
                 )}
@@ -189,18 +264,28 @@ export default function Bases() {
             </div>
           )}
 
-          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {visiveis.map((c, i) => (
-              <ConvenioCard
-                key={c.convenio}
+          <div
+            className={
+              visao === 'lista'
+                ? 'flex flex-col gap-3'
+                : 'grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-4'
+            }
+          >
+            {visiveis.map((c, i) => {
+              const Item = visao === 'lista' ? ConvenioLinha : ConvenioQuadrado;
+              return (
+              <Item
+                key={`${c.donoId ?? ''}|${c.convenio}`}
                 c={c}
                 indice={i}
                 podeGerir={podeGerir}
-                onAbrir={() => abrirTabela(c.convenio)}
+                podeDistribuir={podeGerir && daMinhaEquipe(c)}
+                onAbrir={() => abrirTabela(c.convenio, c.donoId)}
                 onDetalhes={() => setDetalhe(c)}
                 onDistribuir={() => setDistribuir(c)}
               />
-            ))}
+              );
+            })}
           </div>
 
           {totalPaginas > 1 && (
@@ -216,9 +301,9 @@ export default function Bases() {
       {detalhe && (
         <ConvenioDrawer
           c={detalhe}
-          podeGerir={podeGerir}
+          podeGerir={podeGerir && daMinhaEquipe(detalhe)}
           onClose={() => setDetalhe(null)}
-          onAbrir={() => abrirTabela(detalhe.convenio)}
+          onAbrir={() => abrirTabela(detalhe.convenio, detalhe.donoId)}
           onDistribuir={() => { setDistribuir(detalhe); setDetalhe(null); }}
         />
       )}
@@ -244,8 +329,9 @@ export default function Bases() {
 
       {tabela && (
         <TabelaBase
-          key={`${tabela.convenio ?? 'todos'}|${tabela.q ?? ''}`}
+          key={`${tabela.convenio ?? 'todos'}|${tabela.equipeId ?? ''}|${tabela.q ?? ''}`}
           convenio={tabela.convenio}
+          equipeId={tabela.equipeId ?? ''}
           qInicial={tabela.q ?? ''}
           podeAtribuir={podeGerir}
           onClose={() => { setTabela(null); atualizarTudo(); }}

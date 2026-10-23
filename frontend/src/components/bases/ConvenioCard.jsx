@@ -1,4 +1,5 @@
-import { AlertTriangle, Building2, Share2, Table2, UserPlus, Zap } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Building2, Share2, Table2, UserPlus } from 'lucide-react';
 import { STATUS_LEAD } from '../../lib/leads.js';
 import { useContagem } from '../../lib/useContagem.js';
 
@@ -18,6 +19,30 @@ const iniciais = (nome) =>
     .map((p) => p[0])
     .join('')
     .toUpperCase();
+
+/** Faixa no topo do cartão que avisa que a base foi atualizada há pouco e conta o tempo ao vivo. */
+/** Faz o componente redesenhar a cada 30 s, para o "há X min" andar sozinho. */
+export function useRelogio() {
+  const [, atualizar] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => atualizar((n) => n + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
+}
+
+export function FaixaAtualizado({ data }) {
+  useRelogio();
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-t-2xl border-b border-accent/30 bg-gradient-to-r from-accent/20 via-accent/10 to-transparent px-4 py-1.5">
+      <span className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">
+        <span className="live-dot !bg-accent" /> Base atualizada
+      </span>
+      <span className="num rounded-md border border-accent/30 bg-bg/40 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+        {haQuanto(data)}
+      </span>
+    </div>
+  );
+}
 
 /** Barra segmentada com a distribuição dos leads por situação. */
 export function BarraStatus({ porStatus, total, alta = 'h-2' }) {
@@ -51,12 +76,7 @@ export default function ConvenioCard({ c, podeGerir, indice = 0, onAbrir, onDist
       }`}
       style={{ animationDelay: `${Math.min(indice, 11) * 50}ms` }}
     >
-      {c.recente && (
-        <span className="absolute -top-3 left-5 z-10 inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-accent to-accent2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-bg shadow-glow-accent">
-          <span className="live-dot !bg-white" />
-          <Zap size={12} /> Atualizado <span className="font-medium normal-case tracking-normal opacity-80">· {haQuanto(c.ultimaAtualizacao)}</span>
-        </span>
-      )}
+      {c.recente && <FaixaAtualizado data={c.ultimaAtualizacao} />}
 
       <button onClick={onDetalhes} className="flex flex-col gap-4 p-5 text-left" aria-label={`Detalhes de ${c.convenio}`}>
         <div className="flex items-start gap-3">

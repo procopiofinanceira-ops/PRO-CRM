@@ -102,7 +102,8 @@ model Usuario {
   cargo        String?
   departamento String?
   telefone     String?
-  fotoUrl      String?   @map("foto_url")
+  // Foto de perfil como imagem pequena em texto (data URL), já reduzida pelo navegador
+  fotoUrl      String?   @map("foto_url") @db.MediumText
   ativo        Boolean   @default(true)
   ultimoLogin  DateTime? @map("ultimo_login")
 
@@ -209,6 +210,12 @@ model Oportunidade {
   estagioAtualizadoEm DateTime? @map("estagio_atualizado_em")
   // Campos extras: celulares, nascimento, matrícula, margens etc.
   detalhes     Json?
+  // Negociação
+  receitaEsperada Decimal?  @map("receita_esperada") @db.Decimal(15, 2)
+  dataRetorno     DateTime? @map("data_retorno") @db.Date
+  horaRetorno     String?   @map("hora_retorno") @db.VarChar(5)
+  // Histórico de atividades (gerado pelo servidor): [{ data, usuario, estagio?, alteracoes?, notaInterna? }]
+  atividades      Json?
   criadoEm     DateTime  @default(now()) @map("criado_em")
   atualizadoEm DateTime  @updatedAt @map("atualizado_em")
 
@@ -218,6 +225,7 @@ model Oportunidade {
   @@index([donoId, estagio])
   @@index([donoId, pipeline])
   @@index([responsavelId])
+  @@index([donoId, dataRetorno])
   @@map("oportunidades")
 }
 
@@ -648,6 +656,8 @@ model LeadImportado {
   convenio       String?
   codConvenio    String?  @map("cod_convenio")
   margem         String?
+  // Margem livre em número (calculada de `margem` na importação), para filtrar por faixa
+  margemValor    Decimal? @map("margem_valor") @db.Decimal(15, 2)
   margemMenor    String?  @map("margem_menor")
   statusLead     String   @default("novo") @map("status_lead")
   observacao     String?  @db.Text

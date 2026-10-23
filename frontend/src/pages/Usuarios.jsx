@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Search, ShieldCheck } from 'lucide-react';
+import { LayoutGrid, Loader2, Plus, Rows3, Search, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { dataHoraBR } from '../lib/format.js';
+import Avatar from '../components/Avatar.jsx';
 import Modal from '../components/Modal.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import { Carregando, LinhasSkeleton } from '../components/Estados.jsx';
@@ -379,6 +380,21 @@ export default function Usuarios() {
   const [perfil, setPerfil] = useState('');
   const [editando, setEditando] = useState(null);
   const [acesso, setAcesso] = useState(null);
+  const [visao, setVisao] = useState(() => {
+    try {
+      return localStorage.getItem('visao:usuarios') === 'tabela' ? 'tabela' : 'cards';
+    } catch {
+      return 'cards';
+    }
+  });
+  const trocarVisao = (v) => {
+    setVisao(v);
+    try {
+      localStorage.setItem('visao:usuarios', v);
+    } catch {
+      /* sem armazenamento: só não lembra */
+    }
+  };
 
   const { data = [], isLoading, error } = useQuery({
     queryKey: ['/usuarios'],
@@ -412,8 +428,90 @@ export default function Usuarios() {
             <option key={v} value={v}>{p.rotulo}</option>
           ))}
         </select>
+        <div className="ml-auto flex rounded-lg border border-line bg-surface2 p-0.5" role="group" aria-label="Modo de exibição">
+          {[
+            ['cards', 'Cards', LayoutGrid],
+            ['tabela', 'Tabela', Rows3],
+          ].map(([v, rotulo, Icone]) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={visao === v}
+              onClick={() => trocarVisao(v)}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                visao === v ? 'bg-primary text-white shadow-glow' : 'text-muted hover:text-text'
+              }`}
+            >
+              <Icone size={14} /> {rotulo}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {visao === 'cards' && (
+        <>
+          <div className="stagger grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
+            {filtrados.map((u, i) => (
+              <article
+                key={u.id}
+                style={{ '--i': Math.min(i, 12) }}
+                role="button"
+                tabIndex={0}
+                onClick={() => setEditando(u)}
+                onKeyDown={(e) => e.key === 'Enter' && setEditando(u)}
+                className={`card glow-border flex aspect-square min-h-[15rem] cursor-pointer flex-col p-4 transition-[translate,scale,box-shadow] duration-300 ease-out hover:z-10 hover:shadow-xl hover:shadow-primary/30 hover:[scale:1.04] hover:[translate:0_-6px] ${u.ativo ? '' : 'opacity-60'}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <Avatar usuario={u} className="h-12 w-12 text-lg" />
+                  <span className={`inline-flex items-center gap-1.5 text-xs ${u.ativo ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted'}`}>
+                    <span className={`h-2 w-2 rounded-full ${u.ativo ? 'bg-emerald-500' : 'bg-muted'}`} />
+                    {u.ativo ? 'Ativo' : 'Inativo'}
+                  </span>
+                </div>
+
+                <div className="mt-3 min-w-0">
+                  <p className="truncate font-semibold">
+                    {u.nome}
+                    {u.id === eu.id && <span className="ml-2 text-xs font-normal text-muted">(você)</span>}
+                  </p>
+                  <p className="truncate text-xs text-muted">{u.email}</p>
+                  <div className="mt-2">
+                    <Selo perfil={u.perfil} />
+                  </div>
+                </div>
+
+                <dl className="mt-auto space-y-1 border-t border-line pt-3 text-xs">
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-muted">Responsável</dt>
+                    <dd className="truncate">{u.superiorId ? nomes[u.superiorId] ?? '—' : '—'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-muted">Último acesso</dt>
+                    <dd className="num truncate">{u.ultimoLogin ? dataHoraBR(u.ultimoLogin) : 'nunca'}</dd>
+                  </div>
+                </dl>
+
+                {eu.perfil === 'MASTER' && u.perfil === 'MASTER' && (
+                  <button
+                    className="btn-ghost mt-2 !px-2.5 !py-1.5 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAcesso(u);
+                    }}
+                  >
+                    <ShieldCheck size={14} /> Acesso por IP
+                  </button>
+                )}
+              </article>
+            ))}
+          </div>
+          {isLoading && <Carregando />}
+          {error && <p className="p-6 text-center text-sm text-primary">{error.message}</p>}
+          {!isLoading && filtrados.length === 0 && <p className="p-6 text-center text-sm text-muted">Nenhum usuário encontrado.</p>}
+        </>
+      )}
+
+      {visao === 'tabela' && (
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -461,6 +559,7 @@ export default function Usuarios() {
         {error && <p className="p-6 text-center text-sm text-primary">{error.message}</p>}
         {!isLoading && filtrados.length === 0 && <p className="p-6 text-center text-sm text-muted">Nenhum usuário encontrado.</p>}
       </div>
+      )}
 
       {editando && <UsuarioModal key={editando.id ?? 'novo'} usuario={editando} usuarios={data} onClose={() => setEditando(null)} />}
       {acesso && <AcessoModal usuario={acesso} onClose={() => setAcesso(null)} />}

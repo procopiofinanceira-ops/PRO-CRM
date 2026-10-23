@@ -25,6 +25,23 @@ export const num = z
   .optional()
   .transform((v) => (v === '' ? null : v));
 
+// ---------- erros com status HTTP ----------
+
+class ErroHttp extends Error {
+  constructor(status, mensagem) {
+    super(mensagem);
+    this.status = status;
+  }
+}
+
+/** Lance dentro de aoCriar/aoAtualizar para responder com um status específico (ex.: 400). */
+export const erroHttp = (status, mensagem) => new ErroHttp(status, mensagem);
+
+const responderErro = (res, e) => {
+  if (e instanceof ErroHttp) return res.status(e.status).json({ erro: e.message });
+  throw e;
+};
+
 // ---------- fábrica de CRUD ----------
 
 /**
@@ -36,11 +53,21 @@ export const num = z
  * ordem          orderBy padrão
  * incluir        include do Prisma
  * filtros        campos que podem ser filtrados por igualdade via query string (?tipo=X)
+ * filtrosTexto   campos filtrados por "contém" via query string (?nome=ana), um por campo
+ * aposSalvar     async (req, item) => void: roda depois de criar/atualizar (falhas só vão para o log)
+ * aoListar       async (req, itens) => itens: enriquece a listagem (ex.: situação vinda de outra tabela)
  * escopoExtra    (req) => filtro adicional (ex.: promotor só vê o que é dele)
- * aoCriar        (req, dados) => dados  (acrescenta campos antes de gravar)
- * aoAtualizar    (req, dados, atual) => dados
+ * aoCriar        (req, dados) => dados  (pode ser async; acrescenta campos antes de gravar)
+ * aoAtualizar    (req, dados, atual) => dados  (pode ser async; lance erroHttp para recusar)
  */
-export function criarCrud({ model, schema, busca = [], filtros = [], ordem, incluir, escopoExtra, aoCriar, aoAtualizar }) {
+export function criarCrud({ model, schema, busca = [], filtros = [], filtrosTexto = [], ordem, incluir, escopoExtra, aoListar, aoCriar, aoAtualizar, aposSalvar }) {
+  const depois = async (req, item) => {
+    try {
+      await aposSalvar?.(req, item);
+    } catch (e) {
+      console.error('aposSalvar falhou:', e.message);
+    }
+  };
   const router = Router();
   const db = () => prisma[model];
   const base = (req) => ({ donoId: req.donoId, ...(escopoExtra?.(req) ?? {}) });
@@ -55,9 +82,14 @@ export function criarCrud({ model, schema, busca = [], filtros = [], ordem, incl
       if (req.query[campo]) where[campo] = String(req.query[campo]);
     }
 
+    for (const campo of filtrosTexto) {
+      const valor = String(req.query[campo] ?? '').trim();
+      if (valor) (where.AND ??= []).push({ [campo]: { contains: valor } });
+    }
+
     const limite = Math.min(Number(req.query.limite) || 500, 1000);
     const itens = await db().findMany({ where, orderBy: ordem, include: incluir, take: limite });
-    res.json({ itens });
+    res.json({ itens: aoListar ? await aoListar(req, itens) : itens });
   });
 
   router.get('/:id', async (req, res) => {
@@ -70,9 +102,14 @@ export function criarCrud({ model, schema, busca = [], filtros = [], ordem, incl
     const dados = schema.safeParse(req.body);
     if (!dados.success) return res.status(400).json({ erro: dados.error.issues[0].message });
 
-    const payload = aoCriar ? aoCriar(req, dados.data) : dados.data;
-    const item = await db().create({ data: { ...payload, donoId: req.donoId }, include: incluir });
-    res.status(201).json({ item });
+    try {
+      const payload = aoCriar ? await aoCriar(req, dados.data) : dados.data;
+      const item = await db().create({ data: { ...payload, donoId: req.donoId }, include: incluir });
+      await depois(req, item);
+      res.status(201).json({ item });
+    } catch (e) {
+      responderErro(res, e);
+    }
   });
 
   router.put('/:id', async (req, res) => {
@@ -82,9 +119,14 @@ export function criarCrud({ model, schema, busca = [], filtros = [], ordem, incl
     const atual = await db().findFirst({ where: { id: req.params.id, ...base(req) } });
     if (!atual) return res.status(404).json({ erro: 'Registro não encontrado.' });
 
-    const payload = aoAtualizar ? aoAtualizar(req, dados.data, atual) : dados.data;
-    const item = await db().update({ where: { id: atual.id }, data: payload, include: incluir });
-    res.json({ item });
+    try {
+      const payload = aoAtualizar ? await aoAtualizar(req, dados.data, atual) : dados.data;
+      const item = await db().update({ where: { id: atual.id }, data: payload, include: incluir });
+      await depois(req, item);
+      res.json({ item });
+    } catch (e) {
+      responderErro(res, e);
+    }
   });
 
   router.delete('/:id', async (req, res) => {

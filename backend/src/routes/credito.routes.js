@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import { criarCrud, txt, num } from '../lib/crud.js';
+import { prisma } from '../lib/prisma.js';
+
+const somenteDigitos = (v) => String(v ?? '').replace(/\D/g, '');
 
 const inteiro = z.coerce.number().int().min(0).optional();
 
@@ -136,7 +139,28 @@ export const dividas = criarCrud({
 export const carteira = criarCrud({
   model: 'clienteCarteira',
   busca: ['nome', 'cpf', 'cpfCliente', 'convenio', 'telefone'],
+  filtrosTexto: ['nome', 'cpf', 'telefone'],
   ordem: { criadoEm: 'desc' },
+  // Situação do cliente nas oportunidades (mesmo CPF): negociacao (amarelo) | ganhamos (verde) | perdemos (vermelho).
+  // Negociação em aberto vale mais que um desfecho antigo; entre desfechos, vale o mais recente.
+  async aoListar(req, itens) {
+    const cpfs = new Set(itens.map((c) => somenteDigitos(c.cpf)).filter(Boolean));
+    if (!cpfs.size) return itens;
+    const ops = await prisma.oportunidade.findMany({
+      where: { donoId: req.donoId, cpf: { not: null } },
+      select: { cpf: true, estagio: true, atualizadoEm: true },
+      orderBy: { atualizadoEm: 'desc' },
+    });
+    const situacao = new Map();
+    for (const o of ops) {
+      const cpf = somenteDigitos(o.cpf);
+      if (!cpfs.has(cpf)) continue;
+      const nova = o.estagio === 'ganhamos' || o.estagio === 'perdemos' ? o.estagio : 'negociacao';
+      const atual = situacao.get(cpf);
+      if (!atual || (nova === 'negociacao' && atual !== 'negociacao')) situacao.set(cpf, nova);
+    }
+    return itens.map((c) => ({ ...c, situacao: situacao.get(somenteDigitos(c.cpf)) ?? null }));
+  },
   schema: z.object({
     cpf: z.string().trim().min(11, 'Informe o CPF.'),
     cpfCliente: txt,

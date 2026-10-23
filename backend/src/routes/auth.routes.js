@@ -132,6 +132,27 @@ router.get('/me', autenticar, async (req, res) => {
   res.json({ usuario, impersonadoPor: req.impersonadoPor ?? null });
 });
 
+// Foto de perfil: o navegador reduz a imagem e envia como data URL; aqui só conferimos o formato e o tamanho
+const PREFIXOS_FOTO = ['data:image/jpeg;base64,', 'data:image/png;base64,', 'data:image/webp;base64,'];
+const MAX_FOTO = 200_000;
+
+router.put('/foto', autenticar, async (req, res) => {
+  if (req.impersonadoPor) return res.status(403).json({ erro: 'Volte ao seu usuário para trocar a foto.' });
+  const foto = req.body?.foto;
+  if (typeof foto !== 'string' || !PREFIXOS_FOTO.some((p) => foto.startsWith(p))) {
+    return res.status(400).json({ erro: 'Envie uma imagem JPG, PNG ou WebP.' });
+  }
+  if (foto.length > MAX_FOTO) return res.status(400).json({ erro: 'A imagem ficou grande demais. Tente outra foto.' });
+  const usuario = await prisma.usuario.update({ where: { id: req.usuario.id }, data: { fotoUrl: foto }, select: USUARIO_PUBLICO });
+  res.json({ usuario });
+});
+
+router.delete('/foto', autenticar, async (req, res) => {
+  if (req.impersonadoPor) return res.status(403).json({ erro: 'Volte ao seu usuário para trocar a foto.' });
+  const usuario = await prisma.usuario.update({ where: { id: req.usuario.id }, data: { fotoUrl: null }, select: USUARIO_PUBLICO });
+  res.json({ usuario });
+});
+
 const senhaSchema = z.object({
   senhaAtual: z.string().min(1),
   novaSenha: z.string().min(8, 'A nova senha deve ter ao menos 8 caracteres.'),

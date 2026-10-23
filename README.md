@@ -48,6 +48,7 @@ npm run dev               # http://localhost:5173
 6. Campanhas, leads de supervisor, envio de leads a promotores, e-mail/SMS marketing, mensagens internas e central de ajuda (concluído)
 7. Imobiliário (propostas, documentos, simuladores) e painéis de gestão (concluído)
 8. Assistente de IA, notificações e administração: usuários, permissões, acesso por IP do master (concluído)
+   Depois: rodada visual (tema tecnológico), área de Bases, modal completo da oportunidade e página de Promotores (concluídos)
 9. Opcional, a decidir depois: WhatsApp (disparos e atendente com IA). As tabelas já existem no banco.
 
 ## Segurança

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { criarCrud, txt, data, num } from '../lib/crud.js';
 import { autenticar } from '../middleware/auth.js';
+import { ESTAGIOS_ROTULO, garantirNaCarteira, prepararAtualizacao, prepararCriacao } from '../lib/oportunidadeRegras.js';
 
 // ---------------- Contatos ----------------
 export const contatos = criarCrud({
@@ -26,26 +27,21 @@ export const contatos = criarCrud({
 export const oportunidades = criarCrud({
   model: 'oportunidade',
   busca: ['nome', 'empresa', 'cpf', 'telefone'],
+  filtros: ['estagio'],
   ordem: { atualizadoEm: 'desc' },
   incluir: { contato: { select: { id: true, nome: true } } },
   // Promotor enxerga apenas as oportunidades que ele mesmo atende
   escopoExtra: (req) => (req.usuario.perfil === 'PROMOTOR' ? { responsavelId: req.usuario.id } : {}),
-  aoCriar: (req, dados) => ({
-    ...dados,
-    responsavelId: req.usuario.perfil === 'PROMOTOR' ? req.usuario.id : dados.responsavelId,
-    estagioAtualizadoEm: new Date(),
-  }),
-  aoAtualizar: (_req, dados, atual) => ({
-    ...dados,
-    ...(dados.estagio && dados.estagio !== atual.estagio && { estagioAtualizadoEm: new Date() }),
-  }),
+  aoCriar: prepararCriacao,
+  aoAtualizar: prepararAtualizacao,
+  aposSalvar: (req, op) => garantirNaCarteira(req.donoId, op),
   schema: z.object({
     nome: z.string().trim().min(2, 'Informe o nome.'),
     contatoId: txt,
     responsavelId: txt,
     empresa: txt,
     valor: num,
-    estagio: z.string().trim().min(1).optional(),
+    estagio: z.enum(Object.keys(ESTAGIOS_ROTULO)).optional(),
     pipeline: z.string().trim().min(1).optional(),
     dataPrevista: data,
     prioridade: z.coerce.number().int().min(0).max(3).optional(),
@@ -56,6 +52,14 @@ export const oportunidades = criarCrud({
     cidade: txt,
     cpf: txt,
     motivoPerda: txt,
+    receitaEsperada: num,
+    dataRetorno: data,
+    horaRetorno: z
+      .union([z.null(), z.literal(''), z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Hora inválida (use HH:MM).')])
+      .optional()
+      .transform((v) => (v === '' ? null : v)),
+    // Anotação interna nova: vai para o histórico e não é guardada como campo
+    notaInterna: z.string().trim().max(2000).optional(),
     detalhes: z.record(z.any()).nullable().optional(),
   }),
 });
@@ -236,7 +240,26 @@ dashboard.get('/', async (req, res) => {
     });
   };
 
+  // Retornos agendados para hoje ou atrasados (oportunidades ainda abertas)
+  const fimDeHoje = new Date();
+  fimDeHoje.setHours(23, 59, 59, 999);
+  const filtroRetorno = {
+    ...filtroOp,
+    dataRetorno: { not: null, lte: fimDeHoje },
+    estagio: { notIn: ['ganhamos', 'perdemos'] },
+  };
+  const [retornosTotal, retornosItens] = await Promise.all([
+    prisma.oportunidade.count({ where: filtroRetorno }),
+    prisma.oportunidade.findMany({
+      where: filtroRetorno,
+      orderBy: [{ dataRetorno: 'asc' }, { horaRetorno: 'asc' }],
+      take: 6,
+      select: { id: true, nome: true, empresa: true, dataRetorno: true, horaRetorno: true },
+    }),
+  ]);
+
   res.json({
+    retornos: { total: retornosTotal, itens: retornosItens },
     serie: {
       oportunidadesCriadas: montarSerie(opPorDia),
       leadsTrabalhados: montarSerie(leadsPorDia),

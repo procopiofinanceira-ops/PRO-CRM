@@ -38,6 +38,7 @@ import acessoRoutes from './routes/acesso.routes.js';
 import assistenteRoutes from './routes/assistente.routes.js';
 import basesRoutes from './routes/bases.routes.js';
 import buscaRoutes from './routes/busca.routes.js';
+import promotoresRoutes from './routes/promotores.routes.js';
 import {
   emailMarketing,
   smsMarketing,
@@ -117,6 +118,7 @@ app.use('/api/acesso', acessoRoutes);
 app.use('/api/assistente', assistenteRoutes);
 app.use('/api/bases', basesRoutes);
 app.use('/api/busca', buscaRoutes);
+app.use('/api/promotores', promotoresRoutes);
 
 app.use((err, _req, res, _next) => {
   if (err.type === 'entity.parse.failed') {

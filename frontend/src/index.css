@@ -10,7 +10,7 @@
   --line: 221 226 236;
   --fg: 17 20 33;
   --muted: 100 108 130;
-  --primary: 214 31 52;
+  --primary: 232 18 44;
   --primary-fg: 255 255 255;
   --accent: 8 145 178;
   --accent2: 109 40 217;
@@ -26,7 +26,7 @@
   --line: 40 44 62;
   --fg: 233 236 245;
   --muted: 138 146 168;
-  --primary: 247 67 86;
+  --primary: 255 45 69;
   --primary-fg: 255 255 255;
   --accent: 34 211 238;
   --accent2: 167 139 250;
@@ -94,7 +94,7 @@
   }
   .btn-primary {
     @apply btn relative overflow-hidden text-primary-fg shadow-sm hover:-translate-y-px hover:shadow-glow active:brightness-95;
-    background-image: linear-gradient(135deg, rgb(var(--primary)), rgb(var(--primary) / 0.72));
+    background-image: linear-gradient(135deg, rgb(var(--primary)), rgb(var(--primary) / 0.86));
   }
   .btn-primary::after {
     content: '';
