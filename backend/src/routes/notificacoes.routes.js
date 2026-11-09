@@ -25,9 +25,12 @@ function naoImpersonando(req, res, next) {
 }
 
 router.get('/', async (req, res) => {
+  // ?tipo=base_importada lista só um tipo (usado pelo ícone de bases ao lado do sino)
+  const tipo = String(req.query.tipo ?? '').trim();
+  const where = { ...visiveis(req), ...(tipo && { tipo }) };
   const [itens, naoLidas] = await Promise.all([
-    prisma.notificacao.findMany({ where: visiveis(req), orderBy: { criadoEm: 'desc' }, take: 50 }),
-    prisma.notificacao.count({ where: { ...visiveis(req), lida: false } }),
+    prisma.notificacao.findMany({ where, orderBy: { criadoEm: 'desc' }, take: 50 }),
+    prisma.notificacao.count({ where: { ...where, lida: false } }),
   ]);
   res.json({ itens, naoLidas });
 });

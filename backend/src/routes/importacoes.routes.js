@@ -120,13 +120,47 @@ importacoes.post('/:id/registros', async (req, res) => {
 });
 
 importacoes.post('/:id/concluir', async (req, res) => {
+  const dataImportacao = new Date();
   const resultado = await prisma.importacaoPlanilha.updateMany({
     where: { id: req.params.id, donoId: req.donoId },
-    data: { status: 'IMPORTADO', dataImportacao: new Date() },
+    data: { status: 'IMPORTADO', dataImportacao },
   });
   if (!resultado.count) return res.status(404).json({ erro: 'Importação não encontrada.' });
+
+  const importacao = await prisma.importacaoPlanilha.findUnique({ where: { id: req.params.id } });
+  await avisarBaseImportada(req, importacao);
   res.json({ ok: true });
 });
+
+/**
+ * Avisa que há base nova (aparece no pop-up e na lista de bases ao lado do sino).
+ * Bases do master são de todos: avisa também a equipe de cada supervisor ativo.
+ */
+async function avisarBaseImportada(req, importacao) {
+  if (!importacao) return;
+  let donos = [req.donoId];
+  if (req.usuario.perfil === 'MASTER') {
+    const supervisores = await prisma.usuario.findMany({ where: { perfil: 'SUPERVISOR', ativo: true }, select: { id: true } });
+    donos = [...new Set([req.donoId, ...supervisores.map((u) => u.id)])];
+  }
+  const quando = (importacao.dataImportacao ?? new Date()).toLocaleString('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: 'America/Sao_Paulo',
+  });
+  const leads = importacao.totalLinhas ? ` · ${importacao.totalLinhas.toLocaleString('pt-BR')} leads` : '';
+  const mensagem = `Arquivo ${importacao.arquivo}${leads} · Importada em ${quando}`;
+  await Promise.all(
+    donos.map((donoId) =>
+      criarNotificacao({
+        donoId,
+        tipo: 'base_importada',
+        titulo: importacao.convenio || importacao.arquivo,
+        mensagem,
+      }),
+    ),
+  );
+}
 
 importacoes.delete('/:id', async (req, res) => {
   const resultado = await prisma.importacaoPlanilha.deleteMany({

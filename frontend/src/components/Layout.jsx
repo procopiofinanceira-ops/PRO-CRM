@@ -11,6 +11,7 @@ import Avatar from './Avatar.jsx';
 import FotoPerfilModal from './FotoPerfilModal.jsx';
 import CommandPalette from './CommandPalette.jsx';
 import Notificacoes from './Notificacoes.jsx';
+import BasesImportadas from './BasesImportadas.jsx';
 
 const PERFIL = {
   MASTER: 'Master',
@@ -201,6 +202,7 @@ export default function Layout() {
           </button>
 
           <div className="flex items-center gap-2">
+            <BasesImportadas />
             <Notificacoes />
             <button
               className="btn-outline !p-2"
